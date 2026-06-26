@@ -42,6 +42,7 @@ Use `vMAJOR.MINOR.PATCH`.
 ## Local Checks
 
 ```bash
+python3 scripts/evozeus_wrapper_preflight.py doctor --repo {{REPO_NAME}}
 python3 scripts/evozeus_wrapper_preflight.py structure
 python3 scripts/evozeus_wrapper_preflight.py version --repo {{REPO_NAME}}
 python3 scripts/evozeus_wrapper_preflight.py pr --design-doc docs/designs/<design-doc>.md

@@ -52,6 +52,14 @@ def validate_repo(repo: str) -> None:
         fail("--repo must use OWNER/REPO format")
 
 
+def require_github_cli() -> None:
+    if shutil.which("gh") is None:
+        fail("gh CLI is required before bootstrapping a GitHub-backed Skill wrapper")
+    result = subprocess.run(["gh", "auth", "status"], text=True, capture_output=True)
+    if result.returncode != 0:
+        fail("gh is installed but not authenticated; run gh auth login")
+
+
 def check_github_repo_available(repo: str) -> str:
     cmd = ["gh", "repo", "view", repo, "--json", "nameWithOwner,url,visibility"]
     try:
@@ -207,6 +215,7 @@ def main() -> int:
         fail(f"template folder missing: {TARGET_TEMPLATE_DIR}")
     if not PREFLIGHT_SCRIPT.exists():
         fail(f"preflight script missing: {PREFLIGHT_SCRIPT}")
+    require_github_cli()
     repo_check = check_github_repo_available(args.repo)
 
     visibility = args.visibility or ask_visibility()
@@ -235,6 +244,7 @@ def main() -> int:
 
     visibility_flag = "--public" if visibility == "public" else "--private"
     print("\nNext commands from the target folder:")
+    print(f"python3 scripts/evozeus_wrapper_preflight.py doctor --repo {args.repo} --allow-missing-repo")
     print("python3 scripts/evozeus_wrapper_preflight.py structure")
     print("git init")
     print("git add .")

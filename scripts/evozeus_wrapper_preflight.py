@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -61,6 +62,7 @@ PLACEHOLDER_PATTERNS = [
 ]
 
 VERSION_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 def fail(message: str) -> None:
@@ -101,6 +103,76 @@ def version_key(tag: str) -> tuple[int, int, int]:
     return tuple(int(part) for part in match.groups())
 
 
+def run_command(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, cwd=cwd, text=True, capture_output=True, check=False)
+
+
+def require_command(command: str) -> None:
+    if shutil.which(command) is None:
+        fail(f"missing required dependency: {command}")
+
+
+def repo_from_remote(remote_url: str) -> str | None:
+    remote_url = remote_url.strip()
+    match = re.match(r"^https://github\.com/([^/]+/[^/.]+)(?:\.git)?$", remote_url)
+    if match:
+        return match.group(1)
+    match = re.match(r"^git@github\.com:([^/]+/[^/.]+)(?:\.git)?$", remote_url)
+    if match:
+        return match.group(1)
+    return None
+
+
+def gh_current_login() -> str | None:
+    result = run_command(["gh", "api", "user", "--jq", ".login"])
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def gh_orgs() -> list[str]:
+    result = run_command(["gh", "api", "user/orgs", "--jq", ".[].login"])
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def gh_search_repos(query: str) -> list[str]:
+    result = run_command(["gh", "search", "repos", query, "--json", "fullName", "--limit", "10"])
+    if result.returncode != 0:
+        return []
+    try:
+        rows = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return []
+    return [row["fullName"] for row in rows if row.get("fullName")]
+
+
+def discover_repo_candidates(skill_name: str) -> list[str]:
+    candidates: list[str] = []
+    login = gh_current_login()
+    if login:
+        candidates.extend(gh_search_repos(f"{skill_name} user:{login}"))
+    for org in gh_orgs():
+        for repo in gh_search_repos(f"{skill_name} org:{org}"):
+            if repo not in candidates:
+                candidates.append(repo)
+    if candidates:
+        return candidates
+    for repo in gh_search_repos(skill_name):
+        if repo not in candidates:
+            candidates.append(repo)
+    return candidates
+
+
+def is_repo_not_found(output: str) -> bool:
+    markers = [
+        "Could not resolve to a Repository",
+        "Not Found",
+        "HTTP 404",
+        "repository not found",
+    ]
+    return any(marker.lower() in output.lower() for marker in markers)
+
+
 def check_terms(text: str, term_groups: list[list[str]], label: str) -> None:
     missing = []
     for group in term_groups:
@@ -108,6 +180,52 @@ def check_terms(text: str, term_groups: list[list[str]], label: str) -> None:
             missing.append("/".join(group))
     if missing:
         fail(f"{label} missing required concepts: {', '.join(missing)}")
+
+
+def check_doctor(args: argparse.Namespace) -> None:
+    target = Path(args.target).resolve()
+    require_command("git")
+    require_command("gh")
+
+    auth = run_command(["gh", "auth", "status"])
+    if auth.returncode != 0:
+        fail("gh is installed but not authenticated; run gh auth login")
+    ok("gh authenticated")
+
+    repo = args.repo
+    if repo and not GITHUB_REPO_RE.match(repo):
+        fail(f"--repo must use OWNER/REPO format: {repo}")
+
+    git_root_result = run_command(["git", "-C", str(target), "rev-parse", "--show-toplevel"])
+    if git_root_result.returncode == 0:
+        git_root = Path(git_root_result.stdout.strip())
+        remote_result = run_command(["git", "-C", str(git_root), "remote", "get-url", "origin"])
+        if remote_result.returncode == 0:
+            remote_repo = repo_from_remote(remote_result.stdout)
+            if remote_repo:
+                repo = repo or remote_repo
+                ok(f"origin GitHub repo detected: {remote_repo}")
+            else:
+                fail(f"origin remote is not a GitHub repo: {remote_result.stdout.strip()}")
+        elif not repo:
+            fail("target is a git repo but origin remote is missing; pass --repo OWNER/REPO")
+    elif not repo:
+        candidates = discover_repo_candidates(target.name)
+        if candidates:
+            repo = candidates[0]
+            ok(f"target is not a git repo; discovered candidate repo: {repo}")
+        else:
+            fail("target is not a git repo and no --repo was provided")
+
+    if repo:
+        view = run_command(["gh", "repo", "view", repo, "--json", "nameWithOwner,url,visibility"])
+        if view.returncode != 0:
+            detail = (view.stderr or view.stdout or "").strip()
+            if args.allow_missing_repo and is_repo_not_found(detail):
+                ok(f"GitHub repo is available to create: {repo}")
+                return
+            fail(f"cannot access GitHub repo {repo}: {detail}")
+        ok(f"GitHub repo accessible: {repo}")
 
 
 def check_structure(args: argparse.Namespace) -> None:
@@ -261,30 +379,41 @@ def check_version(args: argparse.Namespace) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Preflight checks for an EvoZeus-wrapper Skill repo.")
-    parser.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("structure", help="Check required wrapper files.")
+    doctor = sub.add_parser("doctor", help="Check local git/gh dependencies and source repo access.")
+    doctor.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
+    doctor.add_argument("--repo", help="GitHub repo in OWNER/REPO format. Defaults to origin remote or discovered candidate.")
+    doctor.add_argument("--allow-missing-repo", action="store_true", help="Allow --repo to be absent on GitHub when bootstrapping a new repo.")
+
+    structure = sub.add_parser("structure", help="Check required wrapper files.")
+    structure.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
 
     issue = sub.add_parser("issue", help="Check a Skill feedback issue body.")
+    issue.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
     issue.add_argument("--file", required=True, help="Markdown file containing the issue body.")
 
     pr = sub.add_parser("pr", help="Check Skill evolution PR readiness.")
+    pr.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
     pr.add_argument("--design-doc", help="Path to the design doc for this PR.")
     pr.add_argument("--pr-body", help="Optional PR body markdown file.")
 
     release = sub.add_parser("release", help="Check release readiness.")
+    release.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
     release.add_argument("--tag", required=True, help="Release tag, such as v0.1.0.")
     release.add_argument("--release-notes", help="Markdown file containing release notes.")
     release.add_argument("--repo", help="GitHub repo in OWNER/REPO format for gh release lookup.")
     release.add_argument("--skip-gh", action="store_true", help="Do not call gh release view when release notes are omitted.")
 
     version = sub.add_parser("version", help="Check whether GitHub has a newer Skill release.")
+    version.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
     version.add_argument("--repo", required=True, help="GitHub repo in OWNER/REPO format.")
     version.add_argument("--current-tag", help="Current local Skill version. Defaults to latest release tag in CHANGELOG.md.")
 
     args = parser.parse_args()
-    if args.command == "structure":
+    if args.command == "doctor":
+        check_doctor(args)
+    elif args.command == "structure":
         check_structure(args)
     elif args.command == "issue":
         check_issue(args)

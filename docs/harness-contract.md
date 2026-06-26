@@ -56,12 +56,23 @@ SKILL.md
 
 ## Preflight Contract
 
-`scripts/evozeus_wrapper_preflight.py` 至少支持四类检查：
+`scripts/evozeus_wrapper_preflight.py` 至少支持五类检查：
 
+- `doctor`：本地依赖与源头检查。必须确认 `git`、`gh`、`gh auth status`，并验证目标 repo 或 origin remote 可访问；如果当前目录只是安装副本，必须通过 `--repo` 或候选发现确认 canonical source。bootstrap 阶段目标 repo 尚未创建时，允许 `--allow-missing-repo`，但后续发布前必须去掉该豁免。
 - `structure`：目标 repo 是否包含驾驶舱必需文件。
 - `issue`：Issue 内容是否满足反馈模板字段。
 - `pr`：PR 是否有 design doc，且 changelog 有记录。
 - `release`：release tag 是否在 changelog 中，release notes 是否非空。
+
+## Case: GitHub-backed Skill already exists
+
+`engineering-everything` 自进化时暴露了一个 wrapper 级反模式：agent 先修改安装副本，再查公开 GitHub，最后才发现用户自己的 repo 已存在。正确机制必须进入 wrapper，而不是只留在具体 Skill case 中：
+
+1. 先检查 `git` / `gh` / `gh auth status`。
+2. 当前目录在 git repo 内时，先验证 `origin` 是否是可访问 GitHub repo；bootstrap pre-create 阶段可用 `--allow-missing-repo` 验证目标 repo 可创建。
+3. 当前目录只是安装副本时，先查当前 `gh` 用户 repo，再查用户所属 org repo，最后才扩大到公开 repo 搜索。
+4. lesson 候选先进入 GitHub Issue 队列，再决定是否写入 Skill 内部 lesson / pattern。
+5. 安装副本只作为部署目标；GitHub repo clone 才是 canonical source。
 
 ## Data Policy
 

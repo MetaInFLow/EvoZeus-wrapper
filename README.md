@@ -62,6 +62,7 @@ python3 scripts/evozeus_wrapper_bootstrap.py /absolute/path/to/my-skill \
 ```
 
 脚本会先用 `gh repo view OWNER/REPO` 检查目标 GitHub repo 是否已经存在；如果已存在，必须停止，不要重复创建 harness。
+脚本在检查 repo 前必须先确认本机有 `git`、`gh`，且 `gh auth status` 通过；如果目标 Skill 已经有 git origin，则 origin 必须是可访问的 GitHub repo。bootstrap 阶段允许目标 repo 尚不存在，但必须明确使用 `--allow-missing-repo`。
 然后脚本会交互询问 `public/private`，把 `templates/target/` 中的文件注入目标 Skill 文件夹，并复制 preflight checker。
 同时，脚本会把当前 `SKILL.md` 复制到 `~/.evozeus/.projects/MetaInFLow/my-skill/SKILL.md`，再在目标 Skill 根目录 `SKILL.md` 中追加“自进化方法”章节。
 
@@ -114,6 +115,7 @@ target-skill/
 目标 Skill repo 中可以运行：
 
 ```bash
+python3 scripts/evozeus_wrapper_preflight.py doctor --repo MetaInFLow/my-skill --allow-missing-repo
 python3 scripts/evozeus_wrapper_preflight.py structure
 python3 scripts/evozeus_wrapper_preflight.py version --repo MetaInFLow/my-skill
 python3 scripts/evozeus_wrapper_preflight.py issue --file issue.md
@@ -123,6 +125,7 @@ python3 scripts/evozeus_wrapper_preflight.py release --tag v0.1.0 --release-note
 
 检查规则：
 
+- Doctor：必须能找到 `git`、`gh`，`gh auth status` 必须通过；如果目标有 origin remote，origin 必须是可访问的 GitHub repo；如果是安装副本或非 git 目录，必须显式传 `--repo` 或能发现候选 repo。bootstrap 阶段目标 repo 尚未创建时，使用 `--allow-missing-repo`。
 - Structure：目标 repo 必须包含 wrapper 文件，且根目录 `SKILL.md` 必须描述自进化方法和 `~/.evozeus/.projects/OWNER/REPO/` 本地镜像位置。
 - Version：运行 Skill 前必须检查 GitHub latest release；如果远端 release 比本地 `CHANGELOG.md` 新，先更新再运行。
 - Issue：必须符合反馈模板，说明不满意结果、期望结果、复现场景、证据边界和影响程度。

@@ -14,6 +14,7 @@
 
 ## Verification
 
+- [ ] `python3 scripts/evozeus_wrapper_preflight.py doctor --repo <OWNER/REPO>`
 - [ ] `python3 scripts/evozeus_wrapper_preflight.py structure`
 - [ ] `python3 scripts/evozeus_wrapper_preflight.py pr --design-doc <path>`
 - [ ] Manual Skill behavior check completed

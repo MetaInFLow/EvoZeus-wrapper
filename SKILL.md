@@ -54,17 +54,24 @@ Initial wrapped harness release must be `v0.1.0`.
 ## Workflow
 
 1. Verify the target folder contains `SKILL.md`.
-2. Ask or confirm repo visibility:
+2. Run dependency and source preflight:
+
+   ```bash
+   python3 scripts/evozeus_wrapper_preflight.py doctor --target /absolute/path/to/target-skill --repo OWNER/REPO --allow-missing-repo
+   ```
+
+   `git` and `gh` must exist, `gh auth status` must pass, and any existing origin remote must resolve to an accessible GitHub repo. During bootstrap, `--allow-missing-repo` is allowed because the target repo should not exist yet.
+3. Ask or confirm repo visibility:
    - `public`: repo and Pages can be publicly inspectable.
    - `private`: repo stays private; GitHub Pages availability depends on plan, and published Pages can still be externally visible. Keep `docs/` sanitized.
-3. Verify the target GitHub repo does not already exist:
+4. Verify the target GitHub repo does not already exist:
 
    ```bash
    gh repo view OWNER/REPO --json nameWithOwner,url,visibility
    ```
 
    If the repo exists, stop. Do not create a duplicate harness.
-4. Run the bootstrap script from this repo:
+5. Run the bootstrap script from this repo:
 
    ```bash
    python3 scripts/evozeus_wrapper_bootstrap.py /absolute/path/to/target-skill \
@@ -73,7 +80,7 @@ Initial wrapped harness release must be `v0.1.0`.
      --visibility public
    ```
 
-5. Review the generated files in the target folder:
+6. Review the generated files in the target folder:
    - `CHANGELOG.md`
    - `WRAPPER.md`
    - `docs/index.md`
@@ -83,24 +90,24 @@ Initial wrapped harness release must be `v0.1.0`.
    - `.github/pull_request_template.md`
    - `.github/workflows/evozeus-wrapper-preflight.yml`
    - `scripts/evozeus_wrapper_preflight.py`
-6. Run structure verification from the target folder:
+7. Run structure verification from the target folder:
 
    ```bash
    python3 scripts/evozeus_wrapper_preflight.py structure
    ```
 
-7. Confirm `~/.evozeus/.projects/OWNER/REPO/SKILL.md` contains the original Skill entry.
-8. Confirm root `SKILL.md` contains the self-evolution method and still preserves the original Skill's business rules.
-9. Initialize or reuse git, commit, create the GitHub repo, and push.
-10. Create the initial `v0.1.0` release.
-11. Enable GitHub Pages from `main` branch `/docs` when supported by repo visibility and GitHub plan.
-12. Run the version check:
+8. Confirm `~/.evozeus/.projects/OWNER/REPO/SKILL.md` contains the original Skill entry.
+9. Confirm root `SKILL.md` contains the self-evolution method and still preserves the original Skill's business rules.
+10. Initialize or reuse git, commit, create the GitHub repo, and push.
+11. Create the initial `v0.1.0` release.
+12. Enable GitHub Pages from `main` branch `/docs` when supported by repo visibility and GitHub plan.
+13. Run the version check:
 
    ```bash
    python3 scripts/evozeus_wrapper_preflight.py version --repo OWNER/REPO
    ```
 
-13. Return the repo URL, Pages URL if available, release URL, files added, and preflight result.
+14. Return the repo URL, Pages URL if available, release URL, files added, and preflight result.
 
 ## GitHub Commands
 
@@ -127,6 +134,7 @@ For a private repo, use `--private` instead of `--public`.
 Stop and ask when:
 
 - The target folder does not contain `SKILL.md`.
+- `git` or `gh` is missing, or `gh auth status` fails.
 - The target repo name is missing or ambiguous.
 - The target GitHub repo already exists.
 - GitHub repo existence cannot be verified.
