@@ -8,7 +8,7 @@
 
 ## Repo 职责
 
-EvoZeus-wrapper 负责把一个本地 Skill 文件夹包装成最小自进化驾驶舱：
+EvoZeus-wrapper 是 EvoZeus 母体调度下的 component capability，负责把一个本地 Skill 文件夹包装成最小自进化驾驶舱：
 
 - 为目标 Skill repo 生成 GitHub Pages dashboard。
 - 让用户明确选择 `public` 或 `private`。
@@ -21,7 +21,7 @@ EvoZeus-wrapper 负责把一个本地 Skill 文件夹包装成最小自进化驾
 - 注入 GitHub 上传前 preflight 检查。
 - 初始化后创建 `v0.1.0` release，并要求运行前检查 GitHub latest release。
 
-它不负责改写目标 Skill 的业务内容；除自进化方法说明外，不主动改变原 Skill 的业务规则。它也不保存 raw private session、客户资料、商业资料、secret 或未脱敏 evidence。
+它不是用户安装入口，也不是和 EvoZeus 平级的产品。它不负责改写目标 Skill 的业务内容；除自进化方法说明外，不主动改变原 Skill 的业务规则。它也不保存 raw private session、客户资料、商业资料、secret 或未脱敏 evidence。
 
 ## 编辑原则
 

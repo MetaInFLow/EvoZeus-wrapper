@@ -2,7 +2,7 @@
 
 ## 核心判断
 
-EvoZeus-wrapper 的对象不是“所有 prompt”，而是一个已经存在的本地 Skill 文件夹。
+EvoZeus-wrapper 的对象不是“所有 prompt”，而是一个已经存在的本地 Skill 文件夹。它不是用户下载入口；用户安装和启动 EvoZeus，由 EvoZeus 在 promoted Skill 或已有本地 Skill 需要 repo 化、反馈闭环和版本治理时路由到 wrapper。
 
 它要把这个文件夹补齐成一个最小自进化驾驶舱：
 
@@ -74,6 +74,7 @@ SKILL.md
 
 - 不做通用 prompt 管理平台。
 - 不做 agent runtime。
+- 不做 EvoZeus 的平级入口。
 - 不做自动评分神谕。
 - 不替代 human review。
 - 不把所有 Skill 都迁到一个 repo。

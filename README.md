@@ -1,6 +1,8 @@
 # EvoZeus-wrapper
 
-EvoZeus-wrapper 是一个给本地静态 `SKILL.md` 构建最小自进化驾驶舱的 wrapper。
+EvoZeus-wrapper 是 EvoZeus 母体调度下的静态 Skill 演进 harness，用来给本地静态 `SKILL.md` 构建最小自进化驾驶舱。
+
+用户入口是 EvoZeus，不是 EvoZeus-wrapper。只有当 EvoZeus 判断一个 promoted Skill 或已有本地 Skill 需要 repo 化、反馈闭环和版本治理时，才路由到本 repo。
 
 **Before**：本地只有一个 Skill 文件夹，通常只有 `SKILL.md` 和少量说明。
 
@@ -35,13 +37,13 @@ local SKILL folder
   -> run-time latest release check
 ```
 
-这不是 agent runtime，也不是 prompt 管理平台。它只做一件事：把一个本地 Skill 文件夹包装成可自我进化的协作单元。
+这不是 agent runtime，也不是 prompt 管理平台，也不是和 EvoZeus 平级的用户入口。它只做一件事：在 EvoZeus 调度下，把一个本地 Skill 文件夹包装成可自我进化的协作单元。
 
 ## 使用方式
 
 ### 1. 用 Skill 驱动
 
-让 Agent 读取本 repo 的 `SKILL.md`，并提供目标 Skill 文件夹路径：
+通常由 EvoZeus 判断并路由到本 repo。维护者也可以直接让 Agent 读取本 repo 的 `SKILL.md`，并提供目标 Skill 文件夹路径：
 
 ```text
 Use EvoZeus-wrapper on /absolute/path/to/my-skill.

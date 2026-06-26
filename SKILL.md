@@ -1,11 +1,11 @@
 ---
 name: evozeus-wrapper
-description: Use when turning a local SKILL.md folder into a GitHub-backed self-evolving Skill dashboard with Pages, feedback Issues, design docs, changelog, and preflight checks.
+description: Use when EvoZeus routes a promoted or existing local SKILL.md folder into a GitHub-backed self-evolving Skill dashboard with Pages, feedback Issues, design docs, changelog, and preflight checks.
 ---
 
 # EvoZeus Wrapper
 
-Use this Skill when the user wants to wrap a local Skill folder into a minimal self-evolving dashboard.
+Use this Skill when EvoZeus routes a promoted Skill or existing local Skill folder into a minimal self-evolving dashboard. EvoZeus is the installed root protocol and orchestration layer; this wrapper is a component capability, not a standalone user entrypoint.
 
 ## First Principles
 
@@ -22,7 +22,7 @@ bad or weak Skill result
   -> updated Skill
 ```
 
-Do not turn this into a runtime, scanner, or general prompt platform. The output is a GitHub-backed dashboard around one existing local Skill folder.
+Do not turn this into a runtime, scanner, general prompt platform, or parallel entrypoint to EvoZeus. The output is a GitHub-backed dashboard around one existing local Skill folder.
 
 The target repo must keep two layers separate:
 
