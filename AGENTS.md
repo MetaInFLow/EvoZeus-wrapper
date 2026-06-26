@@ -12,24 +12,31 @@ EvoZeus-wrapper 负责把一个本地 Skill 文件夹包装成最小自进化驾
 
 - 为目标 Skill repo 生成 GitHub Pages dashboard。
 - 让用户明确选择 `public` 或 `private`。
+- 创建 harness 前必须检查目标 GitHub repo 是否已经存在。
+- 在 `~/.evozeus/.projects/OWNER/REPO/` 保留 repo 化前的本地 Skill 项目入口。
+- 在目标 `SKILL.md` 中补充自进化方法说明。
 - 注入 `CHANGELOG.md`。
 - 注入 Skill 反馈 Issue template。
 - 注入 Skill 更新 design doc template。
 - 注入 GitHub 上传前 preflight 检查。
+- 初始化后创建 `v0.1.0` release，并要求运行前检查 GitHub latest release。
 
-它不负责改写目标 Skill 的业务内容，也不保存 raw private session、客户资料、商业资料、secret 或未脱敏 evidence。
+它不负责改写目标 Skill 的业务内容；除自进化方法说明外，不主动改变原 Skill 的业务规则。它也不保存 raw private session、客户资料、商业资料、secret 或未脱敏 evidence。
 
 ## 编辑原则
 
 1. 先明确目标 Skill 文件夹、GitHub repo 名称和 visibility。
 2. visibility 没有明确给出时必须问用户，不要默认 public 或 private。
-3. 对目标 Skill 文件夹做增量注入，不覆盖用户已有文件，除非用户明确要求。
-4. 检查逻辑放在 `scripts/evozeus_wrapper_preflight.py`，模板放在 `templates/target/`。
-5. 不要把 wrapper 做成复杂 runtime；它只负责驾驶舱文件和上传前检查。
-6. 如果涉及 Session Signal 方法或 official factor tools，把内容路由到 `evozeus-session-signal-skill`。
+3. 创建 harness 前必须检查 GitHub repo 是否已存在；已存在就停止，不要重复创建。
+4. 对目标 Skill 文件夹做增量注入，不覆盖用户已有文件，除非用户明确要求。
+5. 检查逻辑放在 `scripts/evozeus_wrapper_preflight.py`，模板放在 `templates/target/`。
+6. 不要把 wrapper 做成复杂 runtime；它只负责驾驶舱文件、release/version 检查和上传前检查。
+7. 如果涉及 Session Signal 方法或 official factor tools，把内容路由到 `evozeus-session-signal-skill`。
 
 ## 验证标准
 
 - 文档变更至少通过人工阅读检查：边界清楚、无内部废话、无 private 数据。
 - 模板变更必须能支持最小闭环：feedback Issue -> design doc -> PR -> CHANGELOG -> release。
 - `scripts/evozeus_wrapper_preflight.py` 变更后必须用一个临时 target folder 跑通 structure / issue / pr / release 检查。
+- bootstrap 变更必须验证 `~/.evozeus/.projects/OWNER/REPO/SKILL.md` 会保留原始本地 Skill，且根目录 `SKILL.md` 会出现自进化方法段。
+- release tag 必须使用 `vMAJOR.MINOR.PATCH`，初始 harness release 固定为 `v0.1.0`。

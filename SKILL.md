@@ -18,10 +18,16 @@ bad or weak Skill result
   -> PR
   -> CHANGELOG
   -> release notes
+  -> latest release check before next run
   -> updated Skill
 ```
 
 Do not turn this into a runtime, scanner, or general prompt platform. The output is a GitHub-backed dashboard around one existing local Skill folder.
+
+The target repo must keep two layers separate:
+
+- `~/.evozeus/.projects/OWNER/REPO/SKILL.md`: the local Skill project entry preserved at bootstrap time.
+- `SKILL.md`: the repo-ready Skill entry, with an added self-evolution method section.
 
 ## Required Inputs
 
@@ -35,13 +41,30 @@ Before acting, identify:
 
 If visibility is not provided, ask the user to choose `public` or `private` before creating or pushing anything.
 
+## Release Version Standard
+
+Use `vMAJOR.MINOR.PATCH`.
+
+- `MAJOR`: incompatible Skill behavior, required input, or output contract change.
+- `MINOR`: new capability, new required evidence rule, or new harness behavior.
+- `PATCH`: wording, examples, bug fixes, validation fixes, or non-breaking clarifications.
+
+Initial wrapped harness release must be `v0.1.0`.
+
 ## Workflow
 
 1. Verify the target folder contains `SKILL.md`.
 2. Ask or confirm repo visibility:
    - `public`: repo and Pages can be publicly inspectable.
    - `private`: repo stays private; GitHub Pages availability depends on plan, and published Pages can still be externally visible. Keep `docs/` sanitized.
-3. Run the bootstrap script from this repo:
+3. Verify the target GitHub repo does not already exist:
+
+   ```bash
+   gh repo view OWNER/REPO --json nameWithOwner,url,visibility
+   ```
+
+   If the repo exists, stop. Do not create a duplicate harness.
+4. Run the bootstrap script from this repo:
 
    ```bash
    python3 scripts/evozeus_wrapper_bootstrap.py /absolute/path/to/target-skill \
@@ -50,7 +73,7 @@ If visibility is not provided, ask the user to choose `public` or `private` befo
      --visibility public
    ```
 
-4. Review the generated files in the target folder:
+5. Review the generated files in the target folder:
    - `CHANGELOG.md`
    - `WRAPPER.md`
    - `docs/index.md`
@@ -60,15 +83,24 @@ If visibility is not provided, ask the user to choose `public` or `private` befo
    - `.github/pull_request_template.md`
    - `.github/workflows/evozeus-wrapper-preflight.yml`
    - `scripts/evozeus_wrapper_preflight.py`
-5. Run structure verification from the target folder:
+6. Run structure verification from the target folder:
 
    ```bash
    python3 scripts/evozeus_wrapper_preflight.py structure
    ```
 
-6. Initialize or reuse git, commit, create the GitHub repo, and push.
-7. Enable GitHub Pages from `main` branch `/docs`.
-8. Return the repo URL, Pages URL if available, and the files added.
+7. Confirm `~/.evozeus/.projects/OWNER/REPO/SKILL.md` contains the original Skill entry.
+8. Confirm root `SKILL.md` contains the self-evolution method and still preserves the original Skill's business rules.
+9. Initialize or reuse git, commit, create the GitHub repo, and push.
+10. Create the initial `v0.1.0` release.
+11. Enable GitHub Pages from `main` branch `/docs` when supported by repo visibility and GitHub plan.
+12. Run the version check:
+
+   ```bash
+   python3 scripts/evozeus_wrapper_preflight.py version --repo OWNER/REPO
+   ```
+
+13. Return the repo URL, Pages URL if available, release URL, files added, and preflight result.
 
 ## GitHub Commands
 
@@ -79,6 +111,9 @@ git init
 git add .
 git commit -m "Initialize wrapped Skill dashboard"
 gh repo create OWNER/REPO --source . --public --push
+gh release create v0.1.0 --repo OWNER/REPO --target main \
+  --title "v0.1.0" \
+  --notes "Initial wrapped Skill harness."
 gh api --method POST repos/OWNER/REPO/pages \
   -f build_type=legacy \
   -f 'source[branch]=main' \
@@ -93,6 +128,8 @@ Stop and ask when:
 
 - The target folder does not contain `SKILL.md`.
 - The target repo name is missing or ambiguous.
+- The target GitHub repo already exists.
+- GitHub repo existence cannot be verified.
 - Visibility is not chosen.
 - The user wants to publish raw private session data, secrets, customer data, or unredacted commercial context.
 - GitHub Pages would expose sensitive content.
@@ -106,8 +143,9 @@ After wrapping a Skill, report:
 1. Target Skill folder.
 2. GitHub repo URL.
 3. Visibility selected.
-4. GitHub Pages URL or Pages setup status.
-5. Files added.
-6. Preflight check result.
+4. Initial release tag and URL.
+5. GitHub Pages URL or Pages setup status.
+6. Files added.
+7. Preflight check result, including version check.
 
 Keep the answer concise and factual.
