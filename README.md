@@ -1,79 +1,122 @@
 # EvoZeus-wrapper
 
-EvoZeus-wrapper 是一个面向静态 `SKILL.md` 的通用 harness：让 Skill 在真实使用中被观察、复盘、评估，并通过审查后的 proposal 逐步进化。
+EvoZeus-wrapper 是一个给本地静态 `SKILL.md` 构建最小自进化驾驶舱的 wrapper。
 
-它不是 runtime，也不是新的 Skill 分发仓库。它的价值是把“边用边进化”从口号变成可记录、可比较、可回归的工作流。
+**Before**：本地只有一个 Skill 文件夹，通常只有 `SKILL.md` 和少量说明。
 
-## 为什么需要
+**After**：该 Skill 变成一个可运行、可反馈、可审查、可发布的 GitHub repo：
 
-静态 Skill 的优势是低信任成本：人可以先读，再决定是否让 Agent 执行。但静态 Skill 也有天然问题：
+- 有一个 GitHub Pages 驾驶舱页面。
+- 用户在创建时明确选择 `public` 或 `private`。
+- 原 Skill repo 增加 `CHANGELOG.md`，记录每次 Skill 迭代。
+- 增加 GitHub Issue 反馈入口，专门收集“使用中结果不满意”的场景。
+- 增加 `docs/design-doc-template.md` 和 `docs/designs/`，每次 Skill 更新先写 design doc。
+- 增加上传前检查：Issue 格式、PR design doc、CHANGELOG、release tag 和 release notes。
 
-- 真实使用后，经验容易散落在聊天记录里。
-- Skill 修改常常缺少 case、run record 和演进理由。
-- 一次修正可能改善当前任务，却破坏已有行为。
-- runtime、factor、report、skill 文档容易混在一起，边界失真。
+## 第一性原理
 
-EvoZeus-wrapper 的第一版只解决一个问题：为静态 Skill 建立最小可验证演进闭环。
+静态 Skill 不是一次写完的文档。真正有价值的 Skill 应该能在真实使用中持续吸收反馈，但每次进化都必须可追踪、可审查、可回滚。
+
+EvoZeus-wrapper 的最小闭环是：
 
 ```text
-static SKILL.md
-  -> case
-  -> run card
-  -> evaluation notes
-  -> evolution proposal
-  -> reviewed Skill change
-  -> regression case
+local SKILL folder
+  -> GitHub repo
+  -> GitHub Pages dashboard
+  -> feedback Issue
+  -> design doc
+  -> PR
+  -> CHANGELOG
+  -> release
 ```
 
-## 职责边界
+这不是 agent runtime，也不是 prompt 管理平台。它只做一件事：把一个本地 Skill 文件夹包装成可自我进化的协作单元。
 
-本 repo 负责：
+## 使用方式
 
-- 定义静态 Skill harness 的最小 contract。
-- 提供 case、run card、evolution proposal 模板。
-- 提供可复用的 wrapper 工作流和示例。
-- 帮助区分事实、推断、建议和待验证结论。
+### 1. 用 Skill 驱动
 
-本 repo 不负责：
-
-- EvoZeus 主协议、治理和社区 intake；这些属于 `EvoZeus`。
-- 本地 scanner、runner、CLI、TUI、SQLite ledger 或网络执行；这些属于 `evozeus-infra`。
-- Session Signal SKILL 和 official factor tools；这些属于 `evozeus-session-signal-skill`。
-- 保存 raw private session、客户资料、secret 或未脱敏 evidence。
-
-## 目录结构
+让 Agent 读取本 repo 的 `SKILL.md`，并提供目标 Skill 文件夹路径：
 
 ```text
-.
+Use EvoZeus-wrapper on /absolute/path/to/my-skill.
+Repo: MetaInFLow/my-skill
+Visibility: public
+```
+
+如果没有给 `Visibility`，Agent 必须先问用户选择 `public` 还是 `private`。
+
+### 2. 用 bootstrap 脚本生成本地驾驶舱文件
+
+```bash
+python3 scripts/evozeus_wrapper_bootstrap.py /absolute/path/to/my-skill \
+  --skill-name "My Skill" \
+  --repo "MetaInFLow/my-skill"
+```
+
+脚本会交互询问 `public/private`，然后把 `templates/target/` 中的文件注入目标 Skill 文件夹，并复制 preflight checker。
+
+### 3. 创建 GitHub repo 和 Pages
+
+在目标 Skill 文件夹中执行：
+
+```bash
+git init
+git add .
+git commit -m "Initialize wrapped Skill dashboard"
+gh repo create MetaInFLow/my-skill --source . --public --push
+gh api --method POST repos/MetaInFLow/my-skill/pages \
+  -f build_type=legacy \
+  -f 'source[branch]=main' \
+  -f 'source[path]=/docs'
+```
+
+如果选择 `private`，把 `--public` 改成 `--private`。注意：GitHub Pages 对 private repo 的可用性取决于 GitHub plan，而且 Pages 站点本身可能仍是互联网可访问的发布面；不要把敏感内容放进 `docs/`。
+
+## 目标 Skill 会被增加什么
+
+```text
+target-skill/
 ├── SKILL.md
+├── CHANGELOG.md
+├── WRAPPER.md
 ├── docs/
-│   └── harness-contract.md
-├── templates/
-│   ├── case.md
-│   ├── evolution-proposal.md
-│   └── run-card.md
-└── examples/
-    └── minimal-static-skill/
-        └── SKILL.md
+│   ├── index.md
+│   ├── _config.yml
+│   ├── design-doc-template.md
+│   └── designs/
+│       └── README.md
+├── scripts/
+│   └── evozeus_wrapper_preflight.py
+└── .github/
+    ├── ISSUE_TEMPLATE/
+    │   ├── config.yml
+    │   └── skill-feedback.yml
+    ├── pull_request_template.md
+    └── workflows/
+        └── evozeus-wrapper-preflight.yml
 ```
 
-## 最小使用方式
+## 上传前检查
 
-1. 选择一个目标静态 Skill，记录版本、来源和适用任务。
-2. 用 `templates/case.md` 写清楚输入、期望行为和验证方式。
-3. 执行时用 `templates/run-card.md` 记录实际表现。
-4. 如果需要改 Skill，用 `templates/evolution-proposal.md` 写出问题、证据、改法和回归检查。
-5. 只有 proposal 通过后，才修改目标 Skill，并补一个 regression case。
+目标 Skill repo 中可以运行：
 
-## Public safety
+```bash
+python3 scripts/evozeus_wrapper_preflight.py structure
+python3 scripts/evozeus_wrapper_preflight.py issue --file issue.md
+python3 scripts/evozeus_wrapper_preflight.py pr --design-doc docs/designs/2026-06-26-example.md
+python3 scripts/evozeus_wrapper_preflight.py release --tag v0.1.0 --release-notes release-notes.md
+```
 
-这个 repo 可以 public，但 public 不代表可以放任何素材。
+检查规则：
 
-- 不提交 raw private session。
-- 不提交客户资料、商业资料、secret、token、cookie、个人隐私。
-- 如果 case 需要真实来源，先脱敏，再保留来源类型和判断依据。
-- 如果需要执行代码、扫描本地文件、上传数据或联网，切到 `evozeus-infra` 的权限模型。
+- Issue：必须符合反馈模板，说明不满意结果、期望结果、复现场景、证据边界和影响程度。
+- PR：必须有 design doc，且 design doc 说明修复 issue、优化目标、优化方向、实现方式和验证计划。
+- PR：必须更新 `CHANGELOG.md`。
+- Release：必须有对应 tag 的 changelog 记录，且 release description 非空。
 
-## 当前状态
+## 边界
 
-Seed repo。第一阶段只固化 contract 和模板，不提前实现 CLI。
+本 repo 不保存目标 Skill 的业务内容，不上传 raw private session，不替代目标 Skill 的 owner 判断。
+
+如果目标 Skill 涉及客户资料、商业资料、secret 或个人隐私，默认使用 private repo，并且 `docs/` 里只放脱敏内容。
