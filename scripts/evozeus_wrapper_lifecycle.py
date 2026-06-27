@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,20 @@ STAGE_LABELS = {
     "publish": "[4/5] Publish & Reinstall",
     "loop": "[5/5] Continuous Evolution Loop",
 }
+
+REQUIRED_WRAPPER_FILES = [
+    "CHANGELOG.md",
+    "WRAPPER.md",
+    "docs/index.md",
+    "docs/_config.yml",
+    "docs/design-doc-template.md",
+    "docs/designs/README.md",
+    ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/ISSUE_TEMPLATE/skill-feedback.yml",
+    ".github/pull_request_template.md",
+    ".github/workflows/evozeus-wrapper-preflight.yml",
+    "scripts/evozeus_wrapper_preflight.py",
+]
 
 
 def stage_label(stage: str) -> str:
@@ -51,6 +66,16 @@ def skill_name_from_skill_md(path: Path) -> str | None:
         if line.startswith("name:"):
             return line.split(":", 1)[1].strip().strip('"').strip("'")
     return None
+
+
+def file_sha256(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def run_command(args: list[str], cwd: Path | None = None) -> dict[str, Any]:
@@ -99,5 +124,124 @@ def diagnose_environment(home: Path = Path.home(), runner=run_command) -> dict[s
             "git": git_status,
             "gh": gh_status,
             "gh_auth": gh_auth_status,
+        },
+    }
+
+
+def repo_projects_pointer(home: Path, repo: str | None) -> Path | None:
+    if not repo or "/" not in repo:
+        return None
+    owner, name = repo.split("/", 1)
+    return home / ".evozeus" / ".projects" / owner / name
+
+
+def describe_install_path(path: Path, target: Path) -> dict[str, Any]:
+    target_skill_hash = file_sha256(target / "SKILL.md")
+    install_skill_hash = file_sha256(path / "SKILL.md")
+    resolved = None
+    if path.exists() or path.is_symlink():
+        try:
+            resolved = str(path.resolve())
+        except OSError:
+            resolved = None
+    return {
+        "path": str(path),
+        "kind": path_kind(path),
+        "resolved_path": resolved,
+        "has_skill_md": (path / "SKILL.md").exists(),
+        "skill_md_hash": install_skill_hash,
+        "matches_target_skill_md": bool(target_skill_hash and install_skill_hash and target_skill_hash == install_skill_hash),
+    }
+
+
+def diagnose_harness_state(target: Path) -> dict[str, Any]:
+    present = [rel for rel in REQUIRED_WRAPPER_FILES if (target / rel).exists()]
+    missing = [rel for rel in REQUIRED_WRAPPER_FILES if not (target / rel).exists()]
+    if not present:
+        state = "missing"
+    elif not missing:
+        state = "complete"
+    else:
+        state = "partial"
+    return {
+        "state": state,
+        "present_files": present,
+        "missing_files": missing,
+        "wrapper_version": None,
+    }
+
+
+def diagnose_repo_state(target: Path, repo: str | None, home: Path, workspace_roots: list[Path], runner=run_command) -> dict[str, Any]:
+    exists_on_github: bool | None = None
+    if repo:
+        view = runner(["gh", "repo", "view", repo, "--json", "nameWithOwner,url,visibility"])
+        exists_on_github = view["returncode"] == 0
+
+    git_root = None
+    git_root_result = runner(["git", "-C", str(target), "rev-parse", "--show-toplevel"])
+    if git_root_result["returncode"] == 0 and git_root_result.get("stdout"):
+        git_root = git_root_result["stdout"].strip()
+
+    pointer = repo_projects_pointer(home, repo)
+    candidates = []
+    if git_root:
+        candidates.append(git_root)
+    if pointer and (pointer.exists() or pointer.is_symlink()):
+        candidates.append(str(pointer))
+    for root in workspace_roots:
+        if root.exists():
+            candidates.append(str(root.expanduser().resolve()))
+
+    unique_candidates = []
+    for candidate in candidates:
+        if candidate not in unique_candidates:
+            unique_candidates.append(candidate)
+
+    return {
+        "name": repo,
+        "exists_on_github": exists_on_github,
+        "candidates": unique_candidates,
+        "canonical_path": unique_candidates[0] if len(unique_candidates) == 1 else None,
+        "needs_user_choice": len(unique_candidates) > 1,
+        "projects_pointer": str(pointer) if pointer else None,
+    }
+
+
+def diagnose_skill(
+    target: Path,
+    repo: str | None,
+    skill_name: str | None,
+    home: Path = Path.home(),
+    workspace_roots: list[Path] | None = None,
+    runner=run_command,
+) -> dict[str, Any]:
+    home = home.expanduser().resolve()
+    target = target.expanduser().resolve()
+    skill_md = target / "SKILL.md"
+    inferred_name = skill_name or skill_name_from_skill_md(skill_md) or target.name
+
+    install_paths = [
+        home / ".codex" / "skills" / inferred_name,
+        home / ".agents" / "skills" / inferred_name,
+    ]
+    installs = [
+        describe_install_path(path, target)
+        for path in install_paths
+        if path.exists() or path.is_symlink()
+    ]
+
+    return {
+        "stage": "target_skill_diagnosis",
+        "skill": {
+            "name": inferred_name,
+            "target_path": str(target),
+            "has_skill_md": skill_md.exists(),
+        },
+        "repo": diagnose_repo_state(target, repo, home, workspace_roots or [], runner),
+        "installs": installs,
+        "harness": diagnose_harness_state(target),
+        "publication": {
+            "visibility": None,
+            "sensitive_risk": "unknown",
         },
     }

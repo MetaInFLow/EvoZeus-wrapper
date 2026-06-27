@@ -4,6 +4,7 @@ import unittest
 
 from scripts.evozeus_wrapper_lifecycle import (
     diagnose_environment,
+    diagnose_skill,
     path_kind,
     repo_from_remote,
     skill_name_from_skill_md,
@@ -87,6 +88,60 @@ class EnvironmentDiagnosisTest(unittest.TestCase):
             self.assertEqual(report["dependencies"]["git"], "ok")
             self.assertEqual(report["dependencies"]["gh"], "ok")
             self.assertEqual(report["dependencies"]["gh_auth"], "failed")
+
+
+class TargetSkillDiagnosisTest(unittest.TestCase):
+    def test_diagnose_skill_reports_target_repo_install_and_missing_harness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            target = Path(tmp) / "resume-screening"
+            target.mkdir()
+            skill_text = '---\nname: "resume-screening"\n---\n# Resume Screening\n'
+            (target / "SKILL.md").write_text(skill_text, encoding="utf-8")
+
+            codex_install = home / ".codex" / "skills" / "resume-screening"
+            codex_install.mkdir(parents=True)
+            (codex_install / "SKILL.md").write_text(skill_text, encoding="utf-8")
+
+            projects_pointer = home / ".evozeus" / ".projects" / "MetaInFLow" / "resume-screening"
+            projects_pointer.mkdir(parents=True)
+
+            def runner(args, cwd=None):
+                return {"returncode": 0, "stdout": "", "stderr": ""}
+
+            report = diagnose_skill(
+                target=target,
+                repo="MetaInFLow/resume-screening",
+                skill_name=None,
+                home=home,
+                runner=runner,
+            )
+
+            self.assertEqual(report["stage"], "target_skill_diagnosis")
+            self.assertEqual(report["skill"]["name"], "resume-screening")
+            self.assertEqual(report["skill"]["has_skill_md"], True)
+            self.assertEqual(report["repo"]["name"], "MetaInFLow/resume-screening")
+            self.assertEqual(report["repo"]["exists_on_github"], True)
+            self.assertEqual(report["repo"]["projects_pointer"], str(projects_pointer.resolve()))
+            self.assertEqual(report["harness"]["state"], "missing")
+            self.assertEqual(len(report["installs"]), 1)
+            self.assertEqual(report["installs"][0]["path"], str(codex_install.resolve()))
+            self.assertEqual(report["installs"][0]["kind"], "directory")
+            self.assertEqual(report["installs"][0]["matches_target_skill_md"], True)
+
+    def test_diagnose_skill_marks_partial_harness_when_some_wrapper_files_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text('---\nname: "skill"\n---\n', encoding="utf-8")
+            (target / "CHANGELOG.md").write_text("# Changelog\n", encoding="utf-8")
+
+            report = diagnose_skill(target=target, repo=None, skill_name=None, home=home)
+            self.assertEqual(report["harness"]["state"], "partial")
+            self.assertIn("CHANGELOG.md", report["harness"]["present_files"])
 
 
 if __name__ == "__main__":
