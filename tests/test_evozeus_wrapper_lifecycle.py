@@ -8,6 +8,7 @@ from scripts.evozeus_wrapper_lifecycle import (
     classify_wrapper_upgrade,
     diagnose_environment,
     diagnose_skill,
+    diagnose_source_contract,
     load_wrapper_manifest,
     path_kind,
     plan_reinstall,
@@ -234,6 +235,125 @@ class WrapperManifestTest(unittest.TestCase):
 
             self.assertIn("skip existing", action)
             self.assertEqual(loaded["canonical_repo"], "MetaInFLow/a")
+
+
+class SourceContractTest(unittest.TestCase):
+    def test_source_contract_passes_for_manifest_pointer_and_runtime_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            target = Path(tmp) / "canonical"
+            target.mkdir()
+            (target / "SKILL.md").write_text('---\nname: "skill"\n---\n', encoding="utf-8")
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.1.0", ["WRAPPER.md"], []),
+            )
+
+            pointer = home / ".evozeus" / ".projects" / "MetaInFLow" / "skill"
+            pointer.parent.mkdir(parents=True)
+            pointer.symlink_to(target)
+            install = home / ".codex" / "skills" / "skill"
+            install.parent.mkdir(parents=True)
+            install.symlink_to(target)
+
+            def runner(args, cwd=None):
+                if len(args) >= 4 and args[0] == "git" and args[3] == "rev-parse":
+                    return {"returncode": 0, "stdout": str(target) + "\n", "stderr": ""}
+                if len(args) >= 4 and args[0] == "git" and args[3] == "remote":
+                    return {"returncode": 0, "stdout": "https://github.com/MetaInFLow/skill.git\n", "stderr": ""}
+                return {"returncode": 1, "stdout": "", "stderr": ""}
+
+            report = diagnose_source_contract(
+                target=target,
+                requested_repo=None,
+                skill_name="skill",
+                home=home,
+                installs=[
+                    {
+                        "path": str(install),
+                        "kind": "symlink",
+                        "resolved_path": str(target.resolve()),
+                    }
+                ],
+                runner=runner,
+            )
+
+            self.assertTrue(report["managed"])
+            self.assertEqual(report["status"], "ok")
+            self.assertEqual(report["canonical_repo"], "MetaInFLow/skill")
+            self.assertEqual(report["projects_pointer"]["resolved_path"], str(target.resolve()))
+            self.assertEqual(report["runtime_installs"][0]["source_contract"], "runtime_pointer_ok")
+
+    def test_source_contract_errors_when_project_pointer_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            target = Path(tmp) / "canonical"
+            target.mkdir()
+            (target / "SKILL.md").write_text('---\nname: "skill"\n---\n', encoding="utf-8")
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.1.0", ["WRAPPER.md"], []),
+            )
+
+            def runner(args, cwd=None):
+                if len(args) >= 4 and args[0] == "git" and args[3] == "rev-parse":
+                    return {"returncode": 0, "stdout": str(target) + "\n", "stderr": ""}
+                return {"returncode": 1, "stdout": "", "stderr": ""}
+
+            report = diagnose_source_contract(
+                target=target,
+                requested_repo=None,
+                skill_name="skill",
+                home=home,
+                installs=[],
+                runner=runner,
+            )
+
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("project pointer is missing" in error for error in report["errors"]))
+
+    def test_source_contract_warns_for_runtime_real_directory_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            target = Path(tmp) / "canonical"
+            target.mkdir()
+            (target / "SKILL.md").write_text('---\nname: "skill"\n---\n', encoding="utf-8")
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.1.0", ["WRAPPER.md"], []),
+            )
+            pointer = home / ".evozeus" / ".projects" / "MetaInFLow" / "skill"
+            pointer.parent.mkdir(parents=True)
+            pointer.symlink_to(target)
+            install = home / ".codex" / "skills" / "skill"
+            install.mkdir(parents=True)
+
+            def runner(args, cwd=None):
+                if len(args) >= 4 and args[0] == "git" and args[3] == "rev-parse":
+                    return {"returncode": 0, "stdout": str(target) + "\n", "stderr": ""}
+                if len(args) >= 4 and args[0] == "git" and args[3] == "remote":
+                    return {"returncode": 0, "stdout": "https://github.com/MetaInFLow/skill.git\n", "stderr": ""}
+                return {"returncode": 1, "stdout": "", "stderr": ""}
+
+            report = diagnose_source_contract(
+                target=target,
+                requested_repo=None,
+                skill_name="skill",
+                home=home,
+                installs=[
+                    {
+                        "path": str(install),
+                        "kind": "directory",
+                        "resolved_path": str(install.resolve()),
+                    }
+                ],
+                runner=runner,
+            )
+
+            self.assertEqual(report["status"], "warning")
+            self.assertEqual(report["runtime_installs"][0]["source_contract"], "runtime_real_directory_warning")
+            self.assertTrue(any("real directory" in warning for warning in report["warnings"]))
 
 
 class TransformPlanningTest(unittest.TestCase):

@@ -32,6 +32,14 @@ The local system must keep one source of truth:
 
 Do not let copied runtime installs become a second source of truth.
 
+For wrapper-managed Skills, source discovery order is fixed:
+
+1. Read `.evozeus/wrapper.json`.
+2. Check `~/.evozeus/.projects/OWNER/REPO`.
+3. Verify the canonical repo git origin and GitHub repo access.
+4. Inspect `.codex` / `.agents` runtime installs only as pointers.
+5. Use GitHub user/org/public search only when wrapper state is absent.
+
 ## Required Inputs
 
 Before acting, identify:
@@ -74,6 +82,8 @@ Wrapper harness version is a separate axis recorded in `.evozeus/wrapper.json`.
    ```bash
    python3 scripts/evozeus_wrapper.py skill diagnose --target /absolute/path/to/target-skill --repo OWNER/REPO --json
    ```
+
+   If `.evozeus/wrapper.json` exists, the diagnosis must honor the wrapper-managed source discovery order before checking runtime installs or GitHub search.
 
 3. Ask or confirm repo visibility:
    - `public`: repo and Pages can be publicly inspectable.

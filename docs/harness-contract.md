@@ -40,6 +40,19 @@ environment diagnosis
 
 安装副本只是部署入口，不能成为第二事实源。旧 real-directory 安装副本如果与 canonical repo 不一致，必须先 diff、归档或让用户确认。
 
+## Source Discovery Contract
+
+wrapper-managed Skill 的源头发现顺序固定，不允许跳过：
+
+1. 读取目标 repo 的 `.evozeus/wrapper.json`。
+2. 用 manifest 的 `canonical_repo` 推导 `~/.evozeus/.projects/OWNER/REPO`。
+3. 检查该 project pointer 必须是 symlink，并 resolve 到 canonical repo。
+4. 验证 canonical repo 的 git origin 与 `canonical_repo` 一致，且 GitHub repo 可访问。
+5. 再检查 `.codex/skills/<skill-name>` 和 `.agents/skills/<skill-name>`；这些路径只能是 runtime pointer，不是可直接修改的事实源。
+6. 只有 wrapper manifest 和 project pointer 都不存在时，才允许进入当前用户 repo、用户 org repo、public GitHub search 的 fallback。
+
+如果 project pointer 缺失、不是 symlink、或与 canonical repo 不一致，preflight 必须失败或给出高优先级错误。runtime real-directory copy 必须报告 warning 或 error，不能被描述为 source。
+
 ## 生成后的目标 repo 必须回答
 
 | 问题 | 产物 |
@@ -75,7 +88,7 @@ environment diagnosis
 
 `scripts/evozeus_wrapper_preflight.py` 至少支持五类检查：
 
-- `doctor`：本地依赖与源头检查。必须确认 `git`、`gh`、`gh auth status`，并验证目标 repo 或 origin remote 可访问；如果当前目录只是安装副本，必须通过 `--repo` 或候选发现确认 canonical source。bootstrap 阶段目标 repo 尚未创建时，允许 `--allow-missing-repo`，但后续发布前必须去掉该豁免。
+- `doctor`：本地依赖与源头检查。必须确认 `git`、`gh`、`gh auth status`。当 `.evozeus/wrapper.json` 存在时，必须先验证 wrapper manifest、`~/.evozeus/.projects/OWNER/REPO`、canonical origin 和 runtime pointer；只有 wrapper state 不存在时，才验证目标 repo/origin 或进入候选发现。bootstrap 阶段目标 repo 尚未创建时，允许 `--allow-missing-repo`，但后续发布前必须去掉该豁免。
 - `structure`：目标 repo 是否包含驾驶舱必需文件。
 - `issue`：Issue 内容是否满足反馈模板字段。
 - `pr`：PR 是否有 design doc，且 changelog 有记录。

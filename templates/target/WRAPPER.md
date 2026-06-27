@@ -25,13 +25,19 @@ If this repo is private, do not assume the GitHub Pages output is private. Keep 
 ## Evolution Loop
 
 1. The target repo is the canonical Skill source. EvoZeus and runtime installs should point to it instead of keeping copied installs.
-2. Before running the Skill, check whether GitHub has a newer release:
+2. Before evolving or running a wrapper-managed Skill, resolve the source in this order:
+   - read `.evozeus/wrapper.json`;
+   - check `~/.evozeus/.projects/{{REPO_NAME}}`;
+   - verify the canonical repo git origin / GitHub repo;
+   - inspect runtime installs only as pointers;
+   - use GitHub user/org/public search only as fallback when wrapper state is absent.
+3. Before running the Skill, check whether GitHub has a newer release:
    `python3 scripts/evozeus_wrapper_preflight.py version --repo {{REPO_NAME}}`
-3. User reports an unsatisfactory Skill result with the feedback Issue template.
-4. Maintainer writes a design doc in `docs/designs/`.
-5. Maintainer opens a PR referencing the design doc.
-6. PR updates `SKILL.md` and `CHANGELOG.md`.
-7. Release tag and release description are created after merge.
+4. User reports an unsatisfactory Skill result with the feedback Issue template.
+5. Maintainer writes a design doc in `docs/designs/`.
+6. Maintainer opens a PR referencing the design doc.
+7. PR updates `SKILL.md` and `CHANGELOG.md`.
+8. Release tag and release description are created after merge.
 
 ## Release Version Standard
 

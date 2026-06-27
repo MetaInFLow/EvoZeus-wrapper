@@ -290,15 +290,33 @@ def repo_projects_pointer(home: Path, repo: str | None) -> Path | None:
     return home / ".evozeus" / ".projects" / owner / name
 
 
+def resolve_path(path: Path) -> str | None:
+    if not (path.exists() or path.is_symlink()):
+        return None
+    try:
+        return str(path.resolve())
+    except OSError:
+        return None
+
+
+def target_canonical_path(target: Path, runner=run_command) -> str:
+    git_root_result = runner(["git", "-C", str(target), "rev-parse", "--show-toplevel"])
+    if git_root_result["returncode"] == 0 and git_root_result.get("stdout"):
+        return str(Path(git_root_result["stdout"].strip()).expanduser().resolve())
+    return str(target.expanduser().resolve())
+
+
+def git_origin_repo(path: Path, runner=run_command) -> str | None:
+    remote_result = runner(["git", "-C", str(path), "remote", "get-url", "origin"])
+    if remote_result["returncode"] != 0:
+        return None
+    return repo_from_remote(remote_result.get("stdout", ""))
+
+
 def describe_install_path(path: Path, target: Path) -> dict[str, Any]:
     target_skill_hash = file_sha256(target / "SKILL.md")
     install_skill_hash = file_sha256(path / "SKILL.md")
-    resolved = None
-    if path.exists() or path.is_symlink():
-        try:
-            resolved = str(path.resolve())
-        except OSError:
-            resolved = None
+    resolved = resolve_path(path)
     return {
         "path": str(path),
         "kind": path_kind(path),
@@ -390,7 +408,10 @@ def diagnose_skill(
         if path.exists() or path.is_symlink()
     ]
 
-    repo_state = diagnose_repo_state(target, repo, home, workspace_roots or [], runner)
+    manifest = load_wrapper_manifest(target)
+    manifest_repo = manifest.get("canonical_repo") if manifest else None
+    effective_repo = repo or manifest_repo
+    repo_state = diagnose_repo_state(target, effective_repo, home, workspace_roots or [], runner)
     return {
         "stage": "target_skill_diagnosis",
         "skill": {
@@ -402,6 +423,14 @@ def diagnose_skill(
         "version": diagnose_skill_version(target, repo_state["exists_on_github"], repo_state["latest_release"]),
         "installs": installs,
         "harness": diagnose_harness_state(target),
+        "source_contract": diagnose_source_contract(
+            target=target,
+            requested_repo=repo,
+            skill_name=inferred_name,
+            home=home,
+            installs=installs,
+            runner=runner,
+        ),
         "publication": {
             "visibility": None,
             "sensitive_risk": "unknown",
@@ -418,6 +447,106 @@ def load_wrapper_manifest(target: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def diagnose_source_contract(
+    target: Path,
+    requested_repo: str | None,
+    skill_name: str,
+    home: Path,
+    installs: list[dict[str, Any]],
+    runner=run_command,
+) -> dict[str, Any]:
+    manifest = load_wrapper_manifest(target)
+    discovery_order = [
+        ".evozeus/wrapper.json",
+        "~/.evozeus/.projects/OWNER/REPO",
+        "canonical repo git origin / GitHub repo",
+        "~/.codex/skills/<skill-name> and ~/.agents/skills/<skill-name>",
+        "current user/org/public GitHub search fallback",
+    ]
+    if not manifest:
+        return {
+            "managed": False,
+            "status": "unmanaged",
+            "discovery_order": discovery_order,
+            "errors": [],
+            "warnings": [],
+            "canonical_repo": requested_repo,
+            "canonical_path": target_canonical_path(target, runner),
+            "projects_pointer": None,
+            "runtime_installs": installs,
+        }
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    manifest_repo = manifest.get("canonical_repo")
+    if not manifest_repo:
+        errors.append(".evozeus/wrapper.json is missing canonical_repo")
+    if requested_repo and manifest_repo and requested_repo != manifest_repo:
+        errors.append(f"--repo {requested_repo} does not match wrapper canonical_repo {manifest_repo}")
+
+    canonical_repo = manifest_repo or requested_repo
+    canonical_path = target_canonical_path(target, runner)
+    pointer = repo_projects_pointer(home, canonical_repo)
+    pointer_info = {
+        "path": str(pointer) if pointer else None,
+        "kind": path_kind(pointer) if pointer else "missing",
+        "resolved_path": resolve_path(pointer) if pointer else None,
+    }
+
+    if not pointer:
+        errors.append("cannot derive ~/.evozeus/.projects pointer because canonical_repo is missing")
+    elif not pointer.exists() and not pointer.is_symlink():
+        errors.append(f"project pointer is missing: {pointer}")
+    elif not pointer.is_symlink():
+        errors.append(f"project pointer must be a symlink to the canonical repo: {pointer}")
+    elif pointer_info["resolved_path"] != canonical_path:
+        errors.append(
+            "project pointer does not resolve to canonical repo: "
+            f"{pointer} -> {pointer_info['resolved_path']} expected {canonical_path}"
+        )
+
+    origin_repo = git_origin_repo(Path(canonical_path), runner)
+    if origin_repo and canonical_repo and origin_repo != canonical_repo:
+        errors.append(f"canonical repo origin {origin_repo} does not match wrapper canonical_repo {canonical_repo}")
+    elif not origin_repo:
+        warnings.append("canonical repo has no GitHub origin yet; this is only acceptable before first publish")
+
+    runtime_reports = []
+    for install in installs:
+        report = dict(install)
+        if install["kind"] == "symlink" and install.get("resolved_path") == canonical_path:
+            report["source_contract"] = "runtime_pointer_ok"
+        elif install["kind"] == "directory":
+            report["source_contract"] = "runtime_real_directory_warning"
+            warnings.append(
+                f"runtime install is a real directory, not a canonical repo symlink: {install['path']}"
+            )
+        elif install["kind"] == "symlink":
+            report["source_contract"] = "runtime_pointer_mismatch"
+            errors.append(
+                f"runtime symlink does not resolve to canonical repo: "
+                f"{install['path']} -> {install.get('resolved_path')} expected {canonical_path}"
+            )
+        else:
+            report["source_contract"] = "runtime_install_unusable"
+            warnings.append(f"runtime install is not a symlink directory: {install['path']}")
+        runtime_reports.append(report)
+
+    status = "error" if errors else "warning" if warnings else "ok"
+    return {
+        "managed": True,
+        "status": status,
+        "discovery_order": discovery_order,
+        "errors": errors,
+        "warnings": warnings,
+        "canonical_repo": canonical_repo,
+        "canonical_path": canonical_path,
+        "canonical_origin_repo": origin_repo,
+        "projects_pointer": pointer_info,
+        "runtime_installs": runtime_reports,
+    }
 
 
 def build_wrapper_manifest(

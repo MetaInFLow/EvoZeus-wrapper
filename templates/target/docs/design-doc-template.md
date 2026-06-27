@@ -22,6 +22,7 @@ Describe the chosen direction and why it is better than the current Skill behavi
 
 ## Verification plan
 
+- Source discovery check:
 - Manual checks:
 - Regression cases:
 - Preflight command:

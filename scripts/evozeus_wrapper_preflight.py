@@ -14,6 +14,7 @@ REQUIRED_FILES = [
     "SKILL.md",
     "CHANGELOG.md",
     "WRAPPER.md",
+    ".evozeus/wrapper.json",
     "docs/index.md",
     "docs/_config.yml",
     "docs/design-doc-template.md",
@@ -44,6 +45,8 @@ DESIGN_TERMS = [
 
 SKILL_EVOLUTION_TERMS = [
     ["自进化"],
+    [".evozeus/wrapper.json"],
+    ["source discovery", "源头发现", "source of truth", "事实源"],
     ["~/.evozeus/.projects", ".evozeus/.projects"],
     ["version --repo"],
     ["Skill Feedback Issue", "feedback issue"],
@@ -72,6 +75,10 @@ def fail(message: str) -> None:
 
 def ok(message: str) -> None:
     print(f"OK: {message}")
+
+
+def warn(message: str) -> None:
+    print(f"WARN: {message}")
 
 
 def read_text(path: Path) -> str:
@@ -110,6 +117,67 @@ def run_command(args: list[str], cwd: Path | None = None) -> subprocess.Complete
 def require_command(command: str) -> None:
     if shutil.which(command) is None:
         fail(f"missing required dependency: {command}")
+
+
+def path_kind(path: Path) -> str:
+    if path.is_symlink():
+        return "symlink"
+    if path.is_dir():
+        return "directory"
+    if path.is_file():
+        return "file"
+    return "missing"
+
+
+def resolve_path(path: Path) -> str | None:
+    if not (path.exists() or path.is_symlink()):
+        return None
+    try:
+        return str(path.resolve())
+    except OSError:
+        return None
+
+
+def wrapper_manifest_path(target: Path) -> Path:
+    return target / ".evozeus" / "wrapper.json"
+
+
+def load_wrapper_manifest(target: Path) -> dict | None:
+    path = wrapper_manifest_path(target)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        fail(f"invalid wrapper manifest JSON: {path}: {exc}")
+
+
+def project_pointer_path(repo: str) -> Path:
+    owner, name = repo.split("/", 1)
+    return Path.home() / ".evozeus" / ".projects" / owner / name
+
+
+def skill_name_from_skill_md(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("name:"):
+            return line.split(":", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
+def target_canonical_path(target: Path) -> str:
+    git_root_result = run_command(["git", "-C", str(target), "rev-parse", "--show-toplevel"])
+    if git_root_result.returncode == 0 and git_root_result.stdout.strip():
+        return str(Path(git_root_result.stdout.strip()).expanduser().resolve())
+    return str(target.expanduser().resolve())
+
+
+def git_origin_repo(path: Path) -> str | None:
+    remote_result = run_command(["git", "-C", str(path), "remote", "get-url", "origin"])
+    if remote_result.returncode != 0:
+        return None
+    return repo_from_remote(remote_result.stdout)
 
 
 def repo_from_remote(remote_url: str) -> str | None:
@@ -196,6 +264,11 @@ def check_doctor(args: argparse.Namespace) -> None:
     if repo and not GITHUB_REPO_RE.match(repo):
         fail(f"--repo must use OWNER/REPO format: {repo}")
 
+    manifest = load_wrapper_manifest(target)
+    if manifest:
+        check_wrapper_managed_doctor(target, repo, manifest, args.allow_missing_repo)
+        return
+
     git_root_result = run_command(["git", "-C", str(target), "rev-parse", "--show-toplevel"])
     if git_root_result.returncode == 0:
         git_root = Path(git_root_result.stdout.strip())
@@ -226,6 +299,74 @@ def check_doctor(args: argparse.Namespace) -> None:
                 return
             fail(f"cannot access GitHub repo {repo}: {detail}")
         ok(f"GitHub repo accessible: {repo}")
+
+
+def check_wrapper_managed_doctor(
+    target: Path,
+    requested_repo: str | None,
+    manifest: dict,
+    allow_missing_repo: bool,
+) -> None:
+    manifest_repo = manifest.get("canonical_repo")
+    if not manifest_repo or not GITHUB_REPO_RE.match(manifest_repo):
+        fail(".evozeus/wrapper.json must contain canonical_repo in OWNER/REPO format")
+    if requested_repo and requested_repo != manifest_repo:
+        fail(f"--repo {requested_repo} does not match wrapper canonical_repo {manifest_repo}")
+    ok(f"wrapper manifest detected: canonical_repo={manifest_repo}")
+
+    canonical_path = target_canonical_path(target)
+    pointer = project_pointer_path(manifest_repo)
+    if not pointer.exists() and not pointer.is_symlink():
+        fail(f"project pointer is missing: {pointer}")
+    if not pointer.is_symlink():
+        fail(f"project pointer must be a symlink to the canonical repo: {pointer}")
+    pointer_resolved = resolve_path(pointer)
+    if pointer_resolved != canonical_path:
+        fail(f"project pointer mismatch: {pointer} -> {pointer_resolved}; expected {canonical_path}")
+    ok(f"project pointer resolves to canonical repo: {pointer} -> {pointer_resolved}")
+
+    origin_repo = git_origin_repo(Path(canonical_path))
+    if origin_repo:
+        if origin_repo != manifest_repo:
+            fail(f"canonical repo origin {origin_repo} does not match wrapper canonical_repo {manifest_repo}")
+        ok(f"canonical repo origin matches wrapper manifest: {origin_repo}")
+    elif allow_missing_repo:
+        warn("canonical repo has no GitHub origin yet; allowed only during pre-publish bootstrap")
+    else:
+        fail("canonical repo has no GitHub origin; publish or pass --allow-missing-repo only during bootstrap")
+
+    view = run_command(["gh", "repo", "view", manifest_repo, "--json", "nameWithOwner,url,visibility"])
+    if view.returncode != 0:
+        detail = (view.stderr or view.stdout or "").strip()
+        if allow_missing_repo and is_repo_not_found(detail):
+            ok(f"GitHub repo is available to create: {manifest_repo}")
+        else:
+            fail(f"cannot access GitHub repo {manifest_repo}: {detail}")
+    else:
+        ok(f"GitHub repo accessible: {manifest_repo}")
+
+    skill_name = skill_name_from_skill_md(target / "SKILL.md") or target.name
+    install_paths = [
+        Path.home() / ".codex" / "skills" / skill_name,
+        Path.home() / ".agents" / "skills" / skill_name,
+    ]
+    found_install = False
+    for install_path in install_paths:
+        if not install_path.exists() and not install_path.is_symlink():
+            continue
+        found_install = True
+        kind = path_kind(install_path)
+        resolved = resolve_path(install_path)
+        if kind == "symlink" and resolved == canonical_path:
+            ok(f"runtime install points to canonical repo: {install_path} -> {resolved}")
+        elif kind == "symlink":
+            fail(f"runtime install symlink mismatch: {install_path} -> {resolved}; expected {canonical_path}")
+        elif kind == "directory":
+            warn(f"runtime install is a real directory copy, not a source of truth: {install_path}")
+        else:
+            warn(f"runtime install is not a usable pointer: {install_path} ({kind})")
+    if not found_install:
+        ok("no runtime install pointers found; canonical repo remains the only discovered source")
 
 
 def check_structure(args: argparse.Namespace) -> None:

@@ -132,7 +132,7 @@ python3 scripts/evozeus_wrapper_preflight.py release --tag v0.1.0 --release-note
 
 检查规则：
 
-- Doctor：必须能找到 `git`、`gh`，`gh auth status` 必须通过；如果目标有 origin remote，origin 必须是可访问的 GitHub repo；如果是安装副本或非 git 目录，必须显式传 `--repo` 或能发现候选 repo。bootstrap 阶段目标 repo 尚未创建时，使用 `--allow-missing-repo`。
+- Doctor：必须能找到 `git`、`gh`，`gh auth status` 必须通过；如果 `.evozeus/wrapper.json` 存在，先读取 manifest，再验证 `~/.evozeus/.projects/OWNER/REPO` symlink、canonical repo origin、GitHub repo 和 runtime install pointer。只有 wrapper state 不存在时，才回退到 origin remote、当前用户 repo、org repo 或 public search。bootstrap 阶段目标 repo 尚未创建时，使用 `--allow-missing-repo`。
 - Structure：目标 repo 必须包含 wrapper 文件，且根目录 `SKILL.md` 必须描述自进化方法和 canonical repo pointer。
 - Version：运行 Skill 前必须检查 GitHub latest release；如果远端 release 比本地 `CHANGELOG.md` 新，先更新再运行。
 - Existing repo version：如果目标 Skill 已经有 GitHub repo，不得把 Skill 版本重置为 `v0.1.0`。先取 GitHub latest release tag；如果没有 release 但 `CHANGELOG.md` 有最新 `vMAJOR.MINOR.PATCH` 条目，先为该 tag 创建或确认 release；两者都没有时停止并让 owner 选择首个 Skill 版本。

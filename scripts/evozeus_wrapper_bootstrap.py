@@ -151,13 +151,24 @@ def build_evolution_section(replacements: dict[str, str]) -> str:
 
 本 Skill 已由 EvoZeus-wrapper 接入自进化闭环。后续任何行为改动都必须先留下可追踪证据，再进入实现。
 
-1. 使用中出现不满意结果时，先提交 Skill Feedback Issue，写清不满意结果、期望结果、复现场景、证据边界和影响程度。
-2. 每次运行本 Skill 前，先执行 `python3 scripts/evozeus_wrapper_preflight.py version --repo {replacements["REPO_NAME"]}`，确认 GitHub latest release 没有新版本。
-3. 开始修改前，在 `docs/designs/` 新建设计文档，明确 Related issue、优化目标、实现计划、验证计划和 release plan。
-4. PR 必须同步更新 `SKILL.md` 与 `CHANGELOG.md`，并通过 `python3 scripts/evozeus_wrapper_preflight.py structure` 和 PR 检查。
-5. 合并后用 `vMAJOR.MINOR.PATCH` release tag 和 release notes 固化本次进化，保留可回滚记录。
+源头发现顺序：
 
-边界：不要把 raw private session、客户资料、secret、未脱敏商业上下文写入公开 Issue、docs 或 release notes；`~/.evozeus/.projects/{replacements["REPO_NAME"]}/` 应指向 canonical repo，不作为 copied install。
+1. 先读取本 repo 的 `.evozeus/wrapper.json`，以 `canonical_repo` 作为目标 repo。
+2. 再检查 `~/.evozeus/.projects/{replacements["REPO_NAME"]}` 是否存在并指向 canonical repo。
+3. 验证 canonical repo 的 git origin / GitHub repo 可访问。
+4. 再检查 runtime install：`~/.codex/skills/<skill-name>`、`~/.agents/skills/<skill-name>`；它们只能是指向 canonical repo 的安装指针。
+5. 只有 wrapper manifest 和 project pointer 都无法确认时，才进入 GitHub user/org/public search。
+
+进化流程：
+
+1. 使用中出现不满意结果时，先提交 Skill Feedback Issue，写清不满意结果、期望结果、复现场景、证据边界和影响程度。
+2. 每次运行本 Skill 前，先执行 `python3 scripts/evozeus_wrapper_preflight.py doctor --repo {replacements["REPO_NAME"]}`，确认 wrapper source contract 成立。
+3. 再执行 `python3 scripts/evozeus_wrapper_preflight.py version --repo {replacements["REPO_NAME"]}`，确认 GitHub latest release 没有新版本。
+4. 开始修改前，在 `docs/designs/` 新建设计文档，明确 Related issue、优化目标、实现计划、验证计划和 release plan。
+5. PR 必须同步更新 `SKILL.md` 与 `CHANGELOG.md`，并通过 `python3 scripts/evozeus_wrapper_preflight.py structure` 和 PR 检查。
+6. 合并后用 `vMAJOR.MINOR.PATCH` release tag 和 release notes 固化本次进化，保留可回滚记录。
+
+边界：不要把 raw private session、客户资料、secret、未脱敏商业上下文写入公开 Issue、docs 或 release notes；`~/.evozeus/.projects/{replacements["REPO_NAME"]}/` 应指向 canonical repo，runtime install 不能作为 copied install 或第二事实源直接修改。
 
 Target repo: `{replacements["REPO_NAME"]}`
 Visibility: `{replacements["VISIBILITY"]}`

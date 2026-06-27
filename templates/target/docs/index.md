@@ -32,13 +32,22 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 
 ## 进化规则
 
+Wrapper-managed Skill 的源头发现顺序固定：
+
+1. 读取 `.evozeus/wrapper.json`。
+2. 检查 `~/.evozeus/.projects/{{REPO_NAME}}` 是否指向 canonical repo。
+3. 验证 canonical repo 的 git origin / GitHub repo。
+4. 检查 `~/.codex/skills/<skill-name>` 和 `~/.agents/skills/<skill-name>`，它们只能是 runtime pointer。
+5. 只有 wrapper 状态无法确认时，才进入 GitHub user/org/public search。
+
 每次运行 Skill 前，先检查 GitHub latest release 是否有新版本：
 
 ```bash
+python3 scripts/evozeus_wrapper_preflight.py doctor --repo {{REPO_NAME}}
 python3 scripts/evozeus_wrapper_preflight.py version --repo {{REPO_NAME}}
 ```
 
-每次 Skill 更新必须先写 design doc，再开 PR。根目录 `SKILL.md` 是 repo 化后的可运行入口；`~/.evozeus/.projects/{{REPO_NAME}}` 和 runtime 安装路径应指向同一个 canonical repo，不保留 copied install 作为第二事实源。
+每次 Skill 更新必须先写 design doc，再开 PR。根目录 `SKILL.md` 是 repo 化后的可运行入口；`~/.evozeus/.projects/{{REPO_NAME}}` 和 runtime 安装路径应指向同一个 canonical repo，不保留 copied install 作为第二事实源，也不要直接修改 `.codex/skills/...` 或 `.agents/skills/...`。
 
 Design doc 至少回答：
 
