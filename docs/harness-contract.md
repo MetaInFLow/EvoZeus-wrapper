@@ -61,6 +61,7 @@ wrapper-managed Skill 的源头发现顺序固定，不允许跳过：
 | 使用中结果不满意怎么反馈？ | `.github/ISSUE_TEMPLATE/skill-feedback.yml` |
 | 修改 Skill 前怎么想清楚？ | `docs/design-doc-template.md` + `docs/designs/*.md` |
 | 每次迭代怎么留下记录？ | `CHANGELOG.md` |
+| wrapper harness 怎么迁移？ | `docs/wrapper-migrations/` + `.evozeus/wrapper.json` |
 | 上传前怎么挡住低质量变更？ | `scripts/evozeus_wrapper_preflight.py` + GitHub Actions |
 | release 是否有说明？ | `CHANGELOG.md` tag entry + GitHub release notes |
 
@@ -105,7 +106,8 @@ python3 scripts/evozeus_wrapper.py skill transform --mode bootstrap --target /ab
 python3 scripts/evozeus_wrapper.py publish reinstall --skill-name skill-name --canonical-path /absolute/path/to/repo --target codex --dry-run --json
 python3 scripts/evozeus_wrapper.py loop lesson --dry-run --json
 python3 scripts/evozeus_wrapper.py loop issue-to-pr --dry-run --json
-python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --json
+python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --latest-version v0.2.0 --json
+python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.2.0 --dry-run --json
 ```
 
 写入、发布、替换安装副本、创建 Issue、创建 PR、启用 Pages 都必须在诊断报告之后进入用户确认。
@@ -119,6 +121,9 @@ python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path
 - `.evozeus/wrapper.json` 必须记录 `wrapper_repo`、`wrapper_version`、`canonical_repo`、`managed_files` 和 `install_links`。
 - wrapper major upgrade 必须用户确认。
 - wrapper upgrade 只能改 harness-managed files，不改目标 Skill 业务规则。
+- wrapper upgrade 必须生成迁移方案，说明 from/to wrapper version、planned files、`SKILL.md` append-only 动作、验证命令和回滚方案。
+- 目标 `SKILL.md` 中的 `EvoZeus-wrapper` 区域只能追加或补缺；如果已经存在，升级时追加 migration note，不改写旧业务段落。
+- `docs/wrapper-migrations/` 是 wrapper harness 迁移账本；`CHANGELOG.md` 仍主要记录目标 Skill 行为 release，除非 wrapper 迁移同时改变了 Skill 行为。
 
 ## Case: GitHub-backed Skill already exists
 

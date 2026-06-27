@@ -2,6 +2,8 @@
 
 All notable changes to {{SKILL_NAME}} are recorded here.
 
+Wrapper harness migrations are recorded under `docs/wrapper-migrations/`. Add them here only when the migration also changes this Skill's behavior or release contract.
+
 ## [Unreleased]
 
 ### Skill changes

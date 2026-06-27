@@ -11,9 +11,8 @@ from evozeus_wrapper_lifecycle import (
     diagnose_environment,
     diagnose_skill,
     plan_reinstall,
+    plan_harness_upgrade,
     classify_pr_permission,
-    classify_wrapper_upgrade,
-    load_wrapper_manifest,
     run_command,
     stage_label,
 )
@@ -128,7 +127,11 @@ def main() -> int:
         if not args.dry_run:
             print("write operations are only implemented through dry-run planning for this mode", file=sys.stderr)
             return 1
-        planned_files = REQUIRED_WRAPPER_FILES + [".evozeus/wrapper.json", "SKILL.md self-evolution section"]
+        planned_files = REQUIRED_WRAPPER_FILES + [
+            ".evozeus/wrapper.json",
+            "SKILL.md self-evolution section",
+            "SKILL.md EvoZeus-wrapper section",
+        ]
         report = {
             "stage": "target_skill_transform",
             "mode": args.mode,
@@ -176,40 +179,22 @@ def main() -> int:
         print_report(report, args.json, "loop")
         return 0
     if args.group == "harness" and args.command == "upgrade-check":
-        manifest = load_wrapper_manifest(Path(args.target))
-        current = manifest.get("wrapper_version") if manifest else None
-        latest = args.latest_version or current
-        status = "missing_manifest" if not current else "latest_unknown"
-        if current and latest:
-            status = classify_wrapper_upgrade(current, latest, args.managed_dirty)
-        report = {
-            "stage": "harness_upgrade",
-            "target": args.target,
-            "current_version": current,
-            "latest_version": latest,
-            "managed_dirty": args.managed_dirty,
-            "upgrade_status": status,
-        }
+        report = plan_harness_upgrade(
+            target=Path(args.target),
+            latest_version=args.latest_version,
+            managed_dirty=args.managed_dirty,
+        )
         print_report(report, args.json, "loop")
         return 0
     if args.group == "harness" and args.command == "upgrade":
         if not args.dry_run:
             print("harness upgrade writes require explicit confirmation and are not implemented yet", file=sys.stderr)
             return 1
-        manifest = load_wrapper_manifest(Path(args.target))
-        current = manifest.get("wrapper_version") if manifest else None
-        status = "missing_manifest" if not current else classify_wrapper_upgrade(
-            current, args.latest_version, args.managed_dirty
+        report = plan_harness_upgrade(
+            target=Path(args.target),
+            latest_version=args.latest_version,
+            managed_dirty=args.managed_dirty,
         )
-        report = {
-            "stage": "harness_upgrade",
-            "target": args.target,
-            "writes": False,
-            "current_version": current,
-            "latest_version": args.latest_version,
-            "managed_dirty": args.managed_dirty,
-            "upgrade_status": status,
-        }
         print_report(report, args.json, "loop")
         return 0
 

@@ -19,6 +19,9 @@ python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/sk
 - Skill release version and wrapper harness version are separate axes.
 - Only update harness-managed files.
 - Do not touch target Skill business rules.
+- `SKILL.md` changes are append-only: add the `EvoZeus-wrapper` section if missing, otherwise append a migration note.
+- Record every wrapper migration under `docs/wrapper-migrations/` with from/to wrapper version, planned files, validation, and rollback.
+- Update `.evozeus/wrapper.json` only after the migration plan is validated.
 - Major wrapper upgrades require explicit user confirmation.
 
 ## Stop Conditions

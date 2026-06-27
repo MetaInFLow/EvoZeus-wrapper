@@ -31,6 +31,8 @@ python3 scripts/evozeus_wrapper.py skill transform --mode verify --target /absol
 ## Rules
 
 - Do not change target Skill business rules.
+- `SKILL.md` changes are append-only: add the self-evolution method and `EvoZeus-wrapper` section if missing.
+- Add `docs/wrapper-migrations/README.md` so future wrapper harness upgrades have a migration ledger.
 - Do not overwrite existing files without explicit user confirmation.
 - Keep `.evozeus/wrapper.json` as the harness manifest.
 

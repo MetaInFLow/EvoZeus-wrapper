@@ -25,6 +25,7 @@ REQUIRED_WRAPPER_FILES = [
     "docs/_config.yml",
     "docs/design-doc-template.md",
     "docs/designs/README.md",
+    "docs/wrapper-migrations/README.md",
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/skill-feedback.yml",
     ".github/pull_request_template.md",
@@ -38,6 +39,7 @@ WRAPPER_MANAGED_FILES = [
     "docs/_config.yml",
     "docs/design-doc-template.md",
     "docs/designs/README.md",
+    "docs/wrapper-migrations/README.md",
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/skill-feedback.yml",
     ".github/pull_request_template.md",
@@ -48,6 +50,8 @@ WRAPPER_MANAGED_FILES = [
 WRAPPER_REPO = "MetaInFLow/EvoZeus-wrapper"
 INITIAL_SKILL_VERSION = "v0.1.0"
 VERSION_HEADER_RE = re.compile(r"^##\s+\[?(v\d+\.\d+\.\d+)\]?\b", re.MULTILINE)
+SKILL_WRAPPER_SECTION = "SKILL.md EvoZeus-wrapper section or migration note (append only)"
+WRAPPER_MIGRATION_README = "docs/wrapper-migrations/README.md"
 
 
 def stage_label(stage: str) -> str:
@@ -676,3 +680,112 @@ def classify_wrapper_upgrade(current: str, latest: str, managed_dirty: bool) -> 
     if managed_dirty:
         return "needs_merge_review"
     return "auto_pr"
+
+
+def wrapper_migration_doc_path(current: str | None, latest: str | None, today: date | None = None) -> str | None:
+    if not latest:
+        return None
+    day = today or date.today()
+    current_label = current or "unknown"
+    return f"docs/wrapper-migrations/{day.isoformat()}-{current_label}-to-{latest}.md"
+
+
+def plan_harness_upgrade(
+    target: Path,
+    latest_version: str | None = None,
+    managed_dirty: bool = False,
+    today: date | None = None,
+) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    manifest = load_wrapper_manifest(target)
+    current = manifest.get("wrapper_version") if manifest else None
+    latest = latest_version or current
+
+    if not current:
+        status = "missing_manifest"
+    elif not latest:
+        status = "latest_unknown"
+    else:
+        status = classify_wrapper_upgrade(current, latest, managed_dirty)
+
+    migration_doc = wrapper_migration_doc_path(current, latest, today)
+    needs_upgrade = status in {"auto_pr", "needs_merge_review", "requires_confirmation"}
+    needs_repair = status in {"missing_manifest", "latest_unknown"}
+
+    planned_files: list[str] = []
+    if needs_upgrade or needs_repair:
+        planned_files.extend(
+            [
+                SKILL_WRAPPER_SECTION,
+                ".evozeus/wrapper.json",
+                WRAPPER_MIGRATION_README,
+            ]
+        )
+        if migration_doc:
+            planned_files.append(migration_doc)
+        planned_files.extend(WRAPPER_MANAGED_FILES)
+
+    deduped_planned_files = []
+    for path in planned_files:
+        if path not in deduped_planned_files:
+            deduped_planned_files.append(path)
+
+    if status == "up_to_date":
+        recommended_action = "none"
+    elif status == "local_ahead":
+        recommended_action = "do_not_downgrade"
+    elif status == "missing_manifest":
+        recommended_action = "repair_or_adopt_before_upgrade"
+    elif status == "latest_unknown":
+        recommended_action = "provide_latest_wrapper_version"
+    elif status == "needs_merge_review":
+        recommended_action = "review_managed_file_diffs_before_upgrade"
+    elif status == "requires_confirmation":
+        recommended_action = "confirm_major_upgrade_and_migration_plan"
+    else:
+        recommended_action = "create_harness_upgrade_pr"
+
+    canonical_repo = manifest.get("canonical_repo") if manifest else None
+    validation = [
+        "python3 scripts/evozeus_wrapper_preflight.py structure",
+    ]
+    if canonical_repo:
+        validation.append(f"python3 scripts/evozeus_wrapper_preflight.py doctor --repo {canonical_repo}")
+    if latest:
+        validation.append(
+            "python3 scripts/evozeus_wrapper.py harness upgrade-check "
+            f"--target {target} --latest-version {latest} --json"
+        )
+
+    return {
+        "stage": "harness_upgrade",
+        "target": str(target),
+        "writes": False,
+        "current_version": current,
+        "latest_version": latest,
+        "managed_dirty": managed_dirty,
+        "upgrade_status": status,
+        "recommended_action": recommended_action,
+        "requires_confirmation": status in {"missing_manifest", "latest_unknown", "needs_merge_review", "requires_confirmation"},
+        "append_only": True,
+        "skill_md_policy": (
+            "append the EvoZeus-wrapper section or a wrapper migration note; never rewrite target Skill business rules"
+        ),
+        "migration": {
+            "from_wrapper_version": current,
+            "to_wrapper_version": latest,
+            "doc_path": migration_doc,
+            "log_dir": "docs/wrapper-migrations",
+            "records_wrapper_version_in": ".evozeus/wrapper.json",
+        },
+        "planned_files": deduped_planned_files,
+        "migration_steps": [
+            "Read .evozeus/wrapper.json and confirm canonical_repo before touching runtime installs.",
+            "Diff wrapper-managed files; if they contain local edits, stop for merge review.",
+            "Copy or merge wrapper-managed files only.",
+            "Append the EvoZeus-wrapper section if missing; otherwise append a migration note instead of editing old text.",
+            "Write a migration record under docs/wrapper-migrations/ with from/to wrapper versions, validation, and rollback.",
+            "Update .evozeus/wrapper.json wrapper_version after validation passes.",
+        ],
+        "validation": validation,
+    }

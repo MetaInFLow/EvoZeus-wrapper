@@ -68,6 +68,7 @@ If the target Skill already has a GitHub repo, preserve its existing Skill versi
 3. If neither exists, stop and ask the owner to choose the first Skill version; do not silently reset an existing repo to `v0.1.0`.
 
 Wrapper harness version is a separate axis recorded in `.evozeus/wrapper.json`.
+When the wrapper harness version changes, target Skills migrate by append-only harness records: add or append the `EvoZeus-wrapper` section in `SKILL.md`, record the migration under `docs/wrapper-migrations/`, and update wrapper-managed files only. Do not rewrite target Skill business rules during wrapper migration.
 
 ## Staged Workflow
 
@@ -110,6 +111,7 @@ Wrapper harness version is a separate axis recorded in `.evozeus/wrapper.json`.
    - `docs/index.md`
    - `docs/design-doc-template.md`
    - `docs/designs/README.md`
+   - `docs/wrapper-migrations/README.md`
    - `.github/ISSUE_TEMPLATE/skill-feedback.yml`
    - `.github/pull_request_template.md`
    - `.github/workflows/evozeus-wrapper-preflight.yml`
@@ -121,7 +123,7 @@ Wrapper harness version is a separate axis recorded in `.evozeus/wrapper.json`.
    python3 scripts/evozeus_wrapper.py publish reinstall --skill-name target-skill --canonical-path /absolute/path/to/canonical/repo --target codex --dry-run --json
    ```
 
-8. Confirm root `SKILL.md` contains the self-evolution method and still preserves the original Skill's business rules.
+8. Confirm root `SKILL.md` contains the self-evolution method and the `EvoZeus-wrapper` section, both appended without rewriting the original Skill's business rules.
 9. Initialize or reuse git, commit, create the GitHub repo, and push when the user confirms.
 10. Create the initial `v0.1.0` release only for a new bootstrap repo; for adopt, keep the existing GitHub latest release or owner-confirmed changelog tag.
 11. Enable GitHub Pages from `main` branch `/docs` when supported by repo visibility and GitHub plan.
@@ -129,7 +131,8 @@ Wrapper harness version is a separate axis recorded in `.evozeus/wrapper.json`.
 
    ```bash
    python3 scripts/evozeus_wrapper_preflight.py version --repo OWNER/REPO
-   python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/target-skill --json
+   python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/target-skill --latest-version v0.2.0 --json
+   python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/target-skill --latest-version v0.2.0 --dry-run --json
    ```
 
 13. Return the repo URL, Pages URL if available, release URL, files added, preflight result, and reinstall plan.

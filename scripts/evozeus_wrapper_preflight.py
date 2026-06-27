@@ -19,6 +19,7 @@ REQUIRED_FILES = [
     "docs/_config.yml",
     "docs/design-doc-template.md",
     "docs/designs/README.md",
+    "docs/wrapper-migrations/README.md",
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/skill-feedback.yml",
     ".github/pull_request_template.md",
@@ -45,12 +46,16 @@ DESIGN_TERMS = [
 
 SKILL_EVOLUTION_TERMS = [
     ["自进化"],
+    ["EvoZeus-wrapper"],
     [".evozeus/wrapper.json"],
     ["source discovery", "源头发现", "source of truth", "事实源"],
     ["~/.evozeus/.projects", ".evozeus/.projects"],
     ["version --repo"],
     ["Skill Feedback Issue", "feedback issue"],
     ["docs/designs", "design doc"],
+    ["docs/wrapper-migrations", "wrapper migration"],
+    ["append-only", "追加"],
+    ["wrapper harness version"],
     ["CHANGELOG.md"],
     ["release tag", "release notes"],
 ]

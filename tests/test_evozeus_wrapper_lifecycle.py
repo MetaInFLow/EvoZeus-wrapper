@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from scripts.evozeus_wrapper_lifecycle import (
     diagnose_skill,
     diagnose_source_contract,
     load_wrapper_manifest,
+    plan_harness_upgrade,
     path_kind,
     plan_reinstall,
     plan_transform_action,
@@ -435,6 +437,55 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
         self.assertEqual(classify_wrapper_upgrade("v0.1.0", "v0.2.0", managed_dirty=True), "needs_merge_review")
         self.assertEqual(classify_wrapper_upgrade("v0.1.0", "v1.0.0", managed_dirty=False), "requires_confirmation")
         self.assertEqual(classify_wrapper_upgrade("v0.2.0", "v0.1.0", managed_dirty=False), "local_ahead")
+
+    def test_plan_harness_upgrade_returns_append_only_migration_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.1.1", ["WRAPPER.md"], []),
+            )
+
+            plan = plan_harness_upgrade(
+                target=target,
+                latest_version="v0.2.0",
+                managed_dirty=False,
+                today=date(2026, 6, 27),
+            )
+
+            self.assertEqual(plan["upgrade_status"], "auto_pr")
+            self.assertEqual(plan["current_version"], "v0.1.1")
+            self.assertEqual(plan["latest_version"], "v0.2.0")
+            self.assertTrue(plan["append_only"])
+            self.assertFalse(plan["requires_confirmation"])
+            self.assertEqual(
+                plan["migration"]["doc_path"],
+                "docs/wrapper-migrations/2026-06-27-v0.1.1-to-v0.2.0.md",
+            )
+            self.assertIn("SKILL.md EvoZeus-wrapper section or migration note (append only)", plan["planned_files"])
+            self.assertIn("docs/wrapper-migrations/README.md", plan["planned_files"])
+            self.assertIn(".evozeus/wrapper.json", plan["planned_files"])
+
+    def test_plan_harness_upgrade_requires_repair_when_manifest_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+
+            plan = plan_harness_upgrade(
+                target=target,
+                latest_version="v0.2.0",
+                today=date(2026, 6, 27),
+            )
+
+            self.assertEqual(plan["upgrade_status"], "missing_manifest")
+            self.assertTrue(plan["requires_confirmation"])
+            self.assertEqual(plan["recommended_action"], "repair_or_adopt_before_upgrade")
+            self.assertEqual(plan["migration"]["from_wrapper_version"], None)
+            self.assertEqual(
+                plan["migration"]["doc_path"],
+                "docs/wrapper-migrations/2026-06-27-unknown-to-v0.2.0.md",
+            )
 
 
 if __name__ == "__main__":

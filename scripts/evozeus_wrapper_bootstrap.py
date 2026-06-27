@@ -15,9 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGET_TEMPLATE_DIR = ROOT / "templates" / "target"
 PREFLIGHT_SCRIPT = ROOT / "scripts" / "evozeus_wrapper_preflight.py"
 EVOLUTION_SECTION_HEADING = "## 自进化方法"
+WRAPPER_SECTION_HEADING = "## EvoZeus-wrapper"
 LOCAL_PROJECTS_DIR = Path.home() / ".evozeus" / ".projects"
 INITIAL_VERSION = "v0.1.0"
-WRAPPER_VERSION = "v0.1.1"
+WRAPPER_VERSION = "v0.2.0"
 
 
 def fail(message: str) -> None:
@@ -56,6 +57,8 @@ def validate_repo(repo: str) -> None:
 
 
 def require_github_cli() -> None:
+    if shutil.which("git") is None:
+        fail("git CLI is required before bootstrapping a GitHub-backed Skill wrapper")
     if shutil.which("gh") is None:
         fail("gh CLI is required before bootstrapping a GitHub-backed Skill wrapper")
     result = subprocess.run(["gh", "auth", "status"], text=True, capture_output=True)
@@ -177,28 +180,57 @@ Wrapper harness version: `{replacements["WRAPPER_VERSION"]}`
 """
 
 
-def inject_evolution_method(target: Path, replacements: dict[str, str]) -> str:
+def build_wrapper_section(replacements: dict[str, str]) -> str:
+    return f"""\
+{WRAPPER_SECTION_HEADING}
+
+本区由 EvoZeus-wrapper 追加，用来说明本 Skill 的 wrapper harness 路由、版本记录和迁移规则。它不覆盖原 Skill 的业务规则；涉及业务行为变化时，仍必须走 Issue、design doc、PR、CHANGELOG 和 release。
+
+调用 wrapper 的场景：
+
+1. 本 Skill 需要 repo 化、adopt/repair wrapper harness、或确认 canonical source。
+2. `.evozeus/wrapper.json` 中的 wrapper harness version 落后于 EvoZeus-wrapper 最新版本。
+3. `~/.evozeus/.projects/{replacements["REPO_NAME"]}`、`.codex` 或 `.agents` runtime install 疑似不是同一个 source of truth。
+4. 使用反馈需要从 Skill Feedback Issue 进入 design doc、PR、CHANGELOG、release 的自进化闭环。
+5. 目标 GitHub repo、release tag、GitHub Pages 或 preflight check 需要创建、诊断或修复。
+
+路由规则：
+
+- 目标 Skill 行为问题：先提交 Skill Feedback Issue，不直接改 runtime install。
+- 源头/安装问题：先运行 `python3 scripts/evozeus_wrapper_preflight.py doctor --repo {replacements["REPO_NAME"]}`。
+- 结构问题：运行 `python3 scripts/evozeus_wrapper_preflight.py structure`。
+- Skill release 问题：运行 `python3 scripts/evozeus_wrapper_preflight.py version --repo {replacements["REPO_NAME"]}`。
+- wrapper harness 升级：回到 EvoZeus-wrapper repo，运行 `python3 scripts/evozeus_wrapper.py harness upgrade-check --target <this-skill-repo> --latest-version <wrapper-version> --json`，再用 `harness upgrade --dry-run` 生成迁移方案。
+
+Append-only 迁移规则：
+
+- wrapper 升级只能追加本区缺失内容、`docs/wrapper-migrations/` 迁移记录，或更新 wrapper-managed files；不要重写原 Skill 业务段落。
+- 如果本区已存在，升级时追加 migration note，不改写旧文本。
+- 每次 wrapper 升级必须记录 from/to wrapper version、planned files、验证命令、回滚方案和是否需要人工 merge review。
+- wrapper version 事实源是 `.evozeus/wrapper.json` 的 `wrapper_version`；Skill release 仍以 GitHub release / `CHANGELOG.md` 为准。
+
+Wrapper harness version: `{replacements["WRAPPER_VERSION"]}`
+Wrapper manifest: `.evozeus/wrapper.json`
+Wrapper migration log: `docs/wrapper-migrations/`
+"""
+
+
+def append_section_if_missing(target: Path, heading: str, section: str) -> str:
     skill_path = target / "SKILL.md"
     text = skill_path.read_text(encoding="utf-8")
-    if EVOLUTION_SECTION_HEADING in text:
-        return f"skip existing {EVOLUTION_SECTION_HEADING} in {skill_path}"
+    if heading in text:
+        return f"skip existing {heading} in {skill_path}"
 
-    section = build_evolution_section(replacements)
-    stop_headings = ["## Stop Conditions", "## 停止条件", "## Output Shape", "## 输出格式"]
-    insert_at = -1
-    for heading in stop_headings:
-        marker = f"\n{heading}"
-        pos = text.find(marker)
-        if pos != -1 and (insert_at == -1 or pos < insert_at):
-            insert_at = pos
-
-    if insert_at == -1:
-        updated = text.rstrip() + "\n\n" + section + "\n"
-    else:
-        updated = text[:insert_at].rstrip() + "\n\n" + section + text[insert_at:]
-
+    updated = text.rstrip() + "\n\n" + section.rstrip() + "\n"
     skill_path.write_text(updated, encoding="utf-8")
-    return f"update {skill_path} with {EVOLUTION_SECTION_HEADING}"
+    return f"append {heading} to {skill_path}"
+
+
+def inject_evolution_method(target: Path, replacements: dict[str, str]) -> list[str]:
+    return [
+        append_section_if_missing(target, EVOLUTION_SECTION_HEADING, build_evolution_section(replacements)),
+        append_section_if_missing(target, WRAPPER_SECTION_HEADING, build_wrapper_section(replacements)),
+    ]
 
 
 def main() -> int:
@@ -239,7 +271,7 @@ def main() -> int:
     actions = [repo_check]
     actions.extend(copy_templates(target, replacements, args.force))
     actions.extend(ensure_project_pointer(target, args.repo, args.force))
-    actions.append(inject_evolution_method(target, replacements))
+    actions.extend(inject_evolution_method(target, replacements))
     actions.append(
         write_wrapper_manifest(
             target,
