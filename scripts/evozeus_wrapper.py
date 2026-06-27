@@ -3,9 +3,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from evozeus_wrapper_lifecycle import diagnose_environment, diagnose_skill, stage_label
+from evozeus_wrapper_lifecycle import (
+    REQUIRED_WRAPPER_FILES,
+    diagnose_environment,
+    diagnose_skill,
+    run_command,
+    stage_label,
+)
 
 
 def print_report(report: dict, as_json: bool, stage: str) -> None:
@@ -33,6 +40,13 @@ def main() -> int:
     skill_diag.add_argument("--skill-name", help="Override Skill name.")
     skill_diag.add_argument("--workspace-root", action="append", default=[], help="Additional local workspace root to inspect.")
     skill_diag.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
+    skill_transform = skill_sub.add_parser("transform", help="Plan or verify target Skill transform.")
+    skill_transform.add_argument("--mode", required=True, choices=["bootstrap", "adopt", "repair", "verify"])
+    skill_transform.add_argument("--target", required=True, help="Path to target Skill folder.")
+    skill_transform.add_argument("--repo", help="GitHub repo in OWNER/REPO format.")
+    skill_transform.add_argument("--visibility", choices=["public", "private"], help="Target repo visibility.")
+    skill_transform.add_argument("--dry-run", action="store_true", help="Print planned transform without writing.")
+    skill_transform.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
 
     args = parser.parse_args()
     if args.group == "env" and args.command == "diagnose":
@@ -46,6 +60,47 @@ def main() -> int:
             workspace_roots=[Path(path) for path in args.workspace_root],
         )
         print_report(report, args.json, "target_skill")
+        return 0
+    if args.group == "skill" and args.command == "transform":
+        target = Path(args.target)
+        if args.mode == "verify":
+            preflight = Path(__file__).resolve().parent / "evozeus_wrapper_preflight.py"
+            result = run_command([sys.executable, str(preflight), "structure", "--target", str(target)])
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "stage": "target_skill_transform",
+                            "mode": "verify",
+                            "target": str(target),
+                            "returncode": result["returncode"],
+                            "stdout": result["stdout"],
+                            "stderr": result["stderr"],
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                print(stage_label("transform"))
+                print(result["stdout"], end="")
+                print(result["stderr"], end="", file=sys.stderr)
+            return int(result["returncode"])
+
+        if not args.dry_run:
+            print("write operations are only implemented through dry-run planning for this mode", file=sys.stderr)
+            return 1
+        planned_files = REQUIRED_WRAPPER_FILES + [".evozeus/wrapper.json", "SKILL.md self-evolution section"]
+        report = {
+            "stage": "target_skill_transform",
+            "mode": args.mode,
+            "target": str(target),
+            "repo": args.repo,
+            "visibility": args.visibility,
+            "writes": False,
+            "planned_files": planned_files,
+        }
+        print_report(report, args.json, "transform")
         return 0
 
     parser.error("unsupported command")

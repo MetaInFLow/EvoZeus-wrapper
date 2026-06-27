@@ -299,3 +299,15 @@ def write_wrapper_manifest(target: Path, manifest: dict[str, Any], force: bool =
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return f"write {path}"
+
+
+def plan_transform_action(harness_state: str, repo_exists: bool | None) -> str:
+    if harness_state == "complete":
+        return "verify"
+    if harness_state == "partial":
+        return "repair"
+    if harness_state != "missing":
+        raise ValueError(f"unknown harness state: {harness_state}")
+    if repo_exists is None:
+        return "needs_repo_check"
+    return "adopt" if repo_exists else "bootstrap"

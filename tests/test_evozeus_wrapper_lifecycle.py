@@ -8,6 +8,7 @@ from scripts.evozeus_wrapper_lifecycle import (
     diagnose_skill,
     load_wrapper_manifest,
     path_kind,
+    plan_transform_action,
     repo_from_remote,
     skill_name_from_skill_md,
     stage_label,
@@ -182,6 +183,17 @@ class WrapperManifestTest(unittest.TestCase):
 
             self.assertIn("skip existing", action)
             self.assertEqual(loaded["canonical_repo"], "MetaInFLow/a")
+
+
+class TransformPlanningTest(unittest.TestCase):
+    def test_plan_transform_action_maps_diagnosis_to_mode(self):
+        self.assertEqual(plan_transform_action("missing", False), "bootstrap")
+        self.assertEqual(plan_transform_action("missing", True), "adopt")
+        self.assertEqual(plan_transform_action("partial", False), "repair")
+        self.assertEqual(plan_transform_action("partial", True), "repair")
+        self.assertEqual(plan_transform_action("complete", False), "verify")
+        self.assertEqual(plan_transform_action("complete", True), "verify")
+        self.assertEqual(plan_transform_action("missing", None), "needs_repo_check")
 
 
 if __name__ == "__main__":
