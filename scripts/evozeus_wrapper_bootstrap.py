@@ -119,38 +119,28 @@ def local_project_dir(repo: str) -> Path:
     return LOCAL_PROJECTS_DIR / owner / name
 
 
-def preserve_project_skill(target: Path, repo: str, replacements: dict[str, str], force: bool) -> list[str]:
-    src = target / "SKILL.md"
+def ensure_project_pointer(target: Path, repo: str, force: bool) -> list[str]:
     project_dir = local_project_dir(repo)
-    skill_dst = project_dir / "SKILL.md"
-    readme_dst = project_dir / "README.md"
     actions: list[str] = []
 
-    if skill_dst.exists() and not force:
-        actions.append(f"skip existing {skill_dst}")
-    else:
-        skill_dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, skill_dst)
-        actions.append(f"write {skill_dst}")
+    if project_dir.is_symlink():
+        if project_dir.resolve() == target:
+            actions.append(f"skip existing pointer {project_dir}")
+        elif force:
+            project_dir.unlink()
+            project_dir.symlink_to(target, target_is_directory=True)
+            actions.append(f"update pointer {project_dir} -> {target}")
+        else:
+            actions.append(f"skip existing pointer {project_dir}; points to {project_dir.resolve()}")
+        return actions
 
-    readme = f"""\
-# {replacements["SKILL_NAME"]} 本地项目镜像
+    if project_dir.exists():
+        actions.append(f"skip existing non-symlink {project_dir}; choose canonical repo before replacing")
+        return actions
 
-这个目录是 EvoZeus-wrapper 使用的本地 Skill 项目镜像。
-
-- Repo: `{replacements["REPO_NAME"]}`
-- Repo URL: {replacements["REPO_URL"]}
-- Bootstrap 时的来源目录：`{target}`
-- 保留的 Skill 入口：`SKILL.md`
-
-除非本地 workspace 策略明确允许，不要在这里保存 raw private session、secret、客户资料或未脱敏商业上下文。
-"""
-    if readme_dst.exists() and not force:
-        actions.append(f"skip existing {readme_dst}")
-    else:
-        readme_dst.parent.mkdir(parents=True, exist_ok=True)
-        readme_dst.write_text(readme, encoding="utf-8")
-        actions.append(f"write {readme_dst}")
+    project_dir.parent.mkdir(parents=True, exist_ok=True)
+    project_dir.symlink_to(target, target_is_directory=True)
+    actions.append(f"write pointer {project_dir} -> {target}")
 
     return actions
 
@@ -167,7 +157,7 @@ def build_evolution_section(replacements: dict[str, str]) -> str:
 4. PR 必须同步更新 `SKILL.md` 与 `CHANGELOG.md`，并通过 `python3 scripts/evozeus_wrapper_preflight.py structure` 和 PR 检查。
 5. 合并后用 `vMAJOR.MINOR.PATCH` release tag 和 release notes 固化本次进化，保留可回滚记录。
 
-边界：不要把 raw private session、客户资料、secret、未脱敏商业上下文写入公开 Issue、docs 或 release notes；repo 化前的本地 Skill 项目镜像放在 `~/.evozeus/.projects/{replacements["REPO_NAME"]}/`。
+边界：不要把 raw private session、客户资料、secret、未脱敏商业上下文写入公开 Issue、docs 或 release notes；`~/.evozeus/.projects/{replacements["REPO_NAME"]}/` 应指向 canonical repo，不作为 copied install。
 
 Target repo: `{replacements["REPO_NAME"]}`
 Visibility: `{replacements["VISIBILITY"]}`
@@ -234,7 +224,7 @@ def main() -> int:
 
     actions = [repo_check]
     actions.extend(copy_templates(target, replacements, args.force))
-    actions.extend(preserve_project_skill(target, args.repo, replacements, args.force))
+    actions.extend(ensure_project_pointer(target, args.repo, args.force))
     actions.append(inject_evolution_method(target, replacements))
     actions.append(
         write_wrapper_manifest(
@@ -248,7 +238,7 @@ def main() -> int:
     print(f"Repo: {args.repo}")
     print(f"Visibility: {visibility}")
     print(f"Initial version: {INITIAL_VERSION}")
-    print(f"Local project mirror: {local_project_dir(args.repo)}")
+    print(f"EvoZeus project pointer: {local_project_dir(args.repo)}")
     for action in actions:
         print(f"- {action}")
 

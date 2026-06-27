@@ -7,7 +7,11 @@ EvoZeus-wrapper 的对象不是“所有 prompt”，而是一个已经存在的
 它要把这个文件夹补齐成一个最小自进化驾驶舱：
 
 ```text
-SKILL.md
+environment diagnosis
+  -> target Skill diagnosis
+  -> canonical Skill repo
+  -> runtime symlink install
+  -> SKILL.md
   -> feedback issue
   -> design doc
   -> PR
@@ -21,7 +25,20 @@ SKILL.md
 | 阶段 | 文件和能力 |
 | --- | --- |
 | Before | 本地 Skill 文件夹，至少包含 `SKILL.md` |
-| After | GitHub repo、GitHub Pages、`CHANGELOG.md`、Issue template、PR template、design doc template、preflight checker |
+| After | canonical GitHub repo、GitHub Pages、`.evozeus/wrapper.json`、`CHANGELOG.md`、Issue template、PR template、design doc template、preflight checker、runtime symlink |
+
+## Single Source Contract
+
+同一个 Skill 在本地只允许一个 physical GitHub repo clone。
+
+| 路径 | 语义 |
+| --- | --- |
+| canonical repo | 唯一事实源 |
+| `~/.evozeus/.projects/OWNER/REPO` | 指向 canonical repo 的 EvoZeus 项目指针 |
+| `~/.codex/skills/<skill-name>` | 指向 canonical repo 的 Codex runtime 指针 |
+| `~/.agents/skills/<skill-name>` | 可选 Agents runtime 指针，保留时也必须指向 canonical repo |
+
+安装副本只是部署入口，不能成为第二事实源。旧 real-directory 安装副本如果与 canonical repo 不一致，必须先 diff、归档或让用户确认。
 
 ## 生成后的目标 repo 必须回答
 
@@ -63,6 +80,32 @@ SKILL.md
 - `issue`：Issue 内容是否满足反馈模板字段。
 - `pr`：PR 是否有 design doc，且 changelog 有记录。
 - `release`：release tag 是否在 changelog 中，release notes 是否非空。
+
+## Lifecycle CLI Contract
+
+`scripts/evozeus_wrapper.py` 负责把运行过程显式拆成阶段：
+
+```bash
+python3 scripts/evozeus_wrapper.py env diagnose --json
+python3 scripts/evozeus_wrapper.py skill diagnose --target /absolute/path/to/skill --repo OWNER/REPO --json
+python3 scripts/evozeus_wrapper.py skill transform --mode bootstrap --target /absolute/path/to/skill --repo OWNER/REPO --visibility private --dry-run --json
+python3 scripts/evozeus_wrapper.py publish reinstall --skill-name skill-name --canonical-path /absolute/path/to/repo --target codex --dry-run --json
+python3 scripts/evozeus_wrapper.py loop lesson --dry-run --json
+python3 scripts/evozeus_wrapper.py loop issue-to-pr --dry-run --json
+python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --json
+```
+
+写入、发布、替换安装副本、创建 Issue、创建 PR、启用 Pages 都必须在诊断报告之后进入用户确认。
+
+## Harness Version Contract
+
+目标 Skill release 和 wrapper harness version 是两条版本轴。
+
+- Skill release 描述目标 Skill 行为版本。
+- Wrapper harness version 描述 EvoZeus-wrapper 注入的模板、脚本和治理逻辑版本。
+- `.evozeus/wrapper.json` 必须记录 `wrapper_repo`、`wrapper_version`、`canonical_repo`、`managed_files` 和 `install_links`。
+- wrapper major upgrade 必须用户确认。
+- wrapper upgrade 只能改 harness-managed files，不改目标 Skill 业务规则。
 
 ## Case: GitHub-backed Skill already exists
 

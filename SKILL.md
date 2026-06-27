@@ -24,10 +24,13 @@ bad or weak Skill result
 
 Do not turn this into a runtime, scanner, general prompt platform, or parallel entrypoint to EvoZeus. The output is a GitHub-backed dashboard around one existing local Skill folder.
 
-The target repo must keep two layers separate:
+The local system must keep one source of truth:
 
-- `~/.evozeus/.projects/OWNER/REPO/SKILL.md`: the local Skill project entry preserved at bootstrap time.
-- `SKILL.md`: the repo-ready Skill entry, with an added self-evolution method section.
+- one physical canonical GitHub repo clone for the target Skill.
+- `~/.evozeus/.projects/OWNER/REPO`: a pointer to the canonical repo.
+- `~/.codex/skills/<skill-name>` and optional `~/.agents/skills/<skill-name>`: runtime pointers to the same canonical repo.
+
+Do not let copied runtime installs become a second source of truth.
 
 ## Required Inputs
 
@@ -51,27 +54,31 @@ Use `vMAJOR.MINOR.PATCH`.
 
 Initial wrapped harness release must be `v0.1.0`.
 
-## Workflow
+## Staged Workflow
 
-1. Verify the target folder contains `SKILL.md`.
-2. Run dependency and source preflight:
+1. Environment diagnosis:
 
    ```bash
-   python3 scripts/evozeus_wrapper_preflight.py doctor --target /absolute/path/to/target-skill --repo OWNER/REPO --allow-missing-repo
+   python3 scripts/evozeus_wrapper.py env diagnose --json
    ```
 
-   `git` and `gh` must exist, `gh auth status` must pass, and any existing origin remote must resolve to an accessible GitHub repo. During bootstrap, `--allow-missing-repo` is allowed because the target repo should not exist yet.
+2. Target Skill diagnosis:
+
+   ```bash
+   python3 scripts/evozeus_wrapper.py skill diagnose --target /absolute/path/to/target-skill --repo OWNER/REPO --json
+   ```
+
 3. Ask or confirm repo visibility:
    - `public`: repo and Pages can be publicly inspectable.
    - `private`: repo stays private; GitHub Pages availability depends on plan, and published Pages can still be externally visible. Keep `docs/` sanitized.
-4. Verify the target GitHub repo does not already exist:
+4. Transform target Skill using the diagnosed mode:
 
    ```bash
-   gh repo view OWNER/REPO --json nameWithOwner,url,visibility
+   python3 scripts/evozeus_wrapper.py skill transform --mode bootstrap --target /absolute/path/to/target-skill --repo OWNER/REPO --visibility private --dry-run --json
+   python3 scripts/evozeus_wrapper.py skill transform --mode verify --target /absolute/path/to/target-skill
    ```
 
-   If the repo exists, stop. Do not create a duplicate harness.
-5. Run the bootstrap script from this repo:
+5. When bootstrap is appropriate, run the compatibility bootstrap script:
 
    ```bash
    python3 scripts/evozeus_wrapper_bootstrap.py /absolute/path/to/target-skill \
@@ -90,24 +97,25 @@ Initial wrapped harness release must be `v0.1.0`.
    - `.github/pull_request_template.md`
    - `.github/workflows/evozeus-wrapper-preflight.yml`
    - `scripts/evozeus_wrapper_preflight.py`
-7. Run structure verification from the target folder:
+   - `.evozeus/wrapper.json`
+7. Run publish reinstall dry-run:
 
    ```bash
-   python3 scripts/evozeus_wrapper_preflight.py structure
+   python3 scripts/evozeus_wrapper.py publish reinstall --skill-name target-skill --canonical-path /absolute/path/to/canonical/repo --target codex --dry-run --json
    ```
 
-8. Confirm `~/.evozeus/.projects/OWNER/REPO/SKILL.md` contains the original Skill entry.
-9. Confirm root `SKILL.md` contains the self-evolution method and still preserves the original Skill's business rules.
-10. Initialize or reuse git, commit, create the GitHub repo, and push.
-11. Create the initial `v0.1.0` release.
-12. Enable GitHub Pages from `main` branch `/docs` when supported by repo visibility and GitHub plan.
-13. Run the version check:
+8. Confirm root `SKILL.md` contains the self-evolution method and still preserves the original Skill's business rules.
+9. Initialize or reuse git, commit, create the GitHub repo, and push when the user confirms.
+10. Create the initial `v0.1.0` release.
+11. Enable GitHub Pages from `main` branch `/docs` when supported by repo visibility and GitHub plan.
+12. Run the version checks:
 
    ```bash
    python3 scripts/evozeus_wrapper_preflight.py version --repo OWNER/REPO
+   python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/target-skill --json
    ```
 
-14. Return the repo URL, Pages URL if available, release URL, files added, and preflight result.
+13. Return the repo URL, Pages URL if available, release URL, files added, preflight result, and reinstall plan.
 
 ## GitHub Commands
 
