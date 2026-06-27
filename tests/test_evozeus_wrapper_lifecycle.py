@@ -8,6 +8,7 @@ from scripts.evozeus_wrapper_lifecycle import (
     diagnose_skill,
     load_wrapper_manifest,
     path_kind,
+    plan_reinstall,
     plan_transform_action,
     repo_from_remote,
     skill_name_from_skill_md,
@@ -194,6 +195,62 @@ class TransformPlanningTest(unittest.TestCase):
         self.assertEqual(plan_transform_action("complete", False), "verify")
         self.assertEqual(plan_transform_action("complete", True), "verify")
         self.assertEqual(plan_transform_action("missing", None), "needs_repo_check")
+
+
+class ReinstallPlanningTest(unittest.TestCase):
+    def test_plan_reinstall_creates_symlink_when_install_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            canonical = Path(tmp) / "repo"
+            canonical.mkdir()
+            (canonical / "SKILL.md").write_text("same", encoding="utf-8")
+
+            plan = plan_reinstall("skill", canonical, home, ["codex"])
+
+            self.assertEqual(plan["stage"], "publish_reinstall")
+            self.assertEqual(plan["actions"][0]["action"], "create_symlink")
+
+    def test_plan_reinstall_detects_already_linked_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            canonical = Path(tmp) / "repo"
+            canonical.mkdir()
+            (canonical / "SKILL.md").write_text("same", encoding="utf-8")
+            install = home / ".codex" / "skills" / "skill"
+            install.parent.mkdir(parents=True)
+            install.symlink_to(canonical)
+
+            plan = plan_reinstall("skill", canonical, home, ["codex"])
+
+            self.assertEqual(plan["actions"][0]["action"], "already_linked")
+
+    def test_plan_reinstall_archives_identical_real_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            canonical = Path(tmp) / "repo"
+            canonical.mkdir()
+            (canonical / "SKILL.md").write_text("same", encoding="utf-8")
+            install = home / ".codex" / "skills" / "skill"
+            install.mkdir(parents=True)
+            (install / "SKILL.md").write_text("same", encoding="utf-8")
+
+            plan = plan_reinstall("skill", canonical, home, ["codex"])
+
+            self.assertEqual(plan["actions"][0]["action"], "archive_then_symlink")
+
+    def test_plan_reinstall_requires_confirmation_for_different_real_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            canonical = Path(tmp) / "repo"
+            canonical.mkdir()
+            (canonical / "SKILL.md").write_text("canonical", encoding="utf-8")
+            install = home / ".codex" / "skills" / "skill"
+            install.mkdir(parents=True)
+            (install / "SKILL.md").write_text("local edits", encoding="utf-8")
+
+            plan = plan_reinstall("skill", canonical, home, ["codex"])
+
+            self.assertEqual(plan["actions"][0]["action"], "needs_user_confirmation")
 
 
 if __name__ == "__main__":

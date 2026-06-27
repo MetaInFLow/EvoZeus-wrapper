@@ -10,6 +10,7 @@ from evozeus_wrapper_lifecycle import (
     REQUIRED_WRAPPER_FILES,
     diagnose_environment,
     diagnose_skill,
+    plan_reinstall,
     run_command,
     stage_label,
 )
@@ -47,6 +48,15 @@ def main() -> int:
     skill_transform.add_argument("--visibility", choices=["public", "private"], help="Target repo visibility.")
     skill_transform.add_argument("--dry-run", action="store_true", help="Print planned transform without writing.")
     skill_transform.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
+
+    publish = sub.add_parser("publish", help="Publish and reinstall lifecycle commands.")
+    publish_sub = publish.add_subparsers(dest="command", required=True)
+    reinstall = publish_sub.add_parser("reinstall", help="Plan runtime symlink reinstall.")
+    reinstall.add_argument("--skill-name", required=True)
+    reinstall.add_argument("--canonical-path", required=True)
+    reinstall.add_argument("--target", action="append", required=True, help="codex, agents, all, or an explicit install path.")
+    reinstall.add_argument("--dry-run", action="store_true", help="Only print planned reinstall actions.")
+    reinstall.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
 
     args = parser.parse_args()
     if args.group == "env" and args.command == "diagnose":
@@ -101,6 +111,13 @@ def main() -> int:
             "planned_files": planned_files,
         }
         print_report(report, args.json, "transform")
+        return 0
+    if args.group == "publish" and args.command == "reinstall":
+        if not args.dry_run:
+            print("write operations are not implemented until archive confirmation is added", file=sys.stderr)
+            return 1
+        report = plan_reinstall(args.skill_name, Path(args.canonical_path), Path.home(), args.target)
+        print_report(report, args.json, "publish")
         return 0
 
     parser.error("unsupported command")

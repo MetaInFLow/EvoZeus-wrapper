@@ -311,3 +311,66 @@ def plan_transform_action(harness_state: str, repo_exists: bool | None) -> str:
     if repo_exists is None:
         return "needs_repo_check"
     return "adopt" if repo_exists else "bootstrap"
+
+
+def classify_install_action(install_path: Path, canonical_path: Path) -> dict[str, Any]:
+    canonical_path = canonical_path.expanduser().resolve()
+    kind = path_kind(install_path)
+    resolved_path = None
+    if install_path.exists() or install_path.is_symlink():
+        try:
+            resolved_path = str(install_path.resolve())
+        except OSError:
+            resolved_path = None
+
+    if kind == "missing":
+        action = "create_symlink"
+        reason = "install path is missing"
+    elif kind == "symlink" and resolved_path == str(canonical_path):
+        action = "already_linked"
+        reason = "install path already points to canonical repo"
+    elif kind == "symlink":
+        action = "relink_symlink"
+        reason = "install symlink points somewhere else"
+    elif kind == "directory":
+        canonical_hash = file_sha256(canonical_path / "SKILL.md")
+        install_hash = file_sha256(install_path / "SKILL.md")
+        if canonical_hash and install_hash and canonical_hash == install_hash:
+            action = "archive_then_symlink"
+            reason = "real directory install has identical SKILL.md"
+        else:
+            action = "needs_user_confirmation"
+            reason = "real directory install differs from canonical repo"
+    else:
+        action = "needs_user_confirmation"
+        reason = "install path is not a directory or symlink"
+
+    return {
+        "path": str(install_path),
+        "kind": kind,
+        "resolved_path": resolved_path,
+        "canonical_path": str(canonical_path),
+        "action": action,
+        "reason": reason,
+    }
+
+
+def plan_reinstall(skill_name: str, canonical_path: Path, home: Path, targets: list[str]) -> dict[str, Any]:
+    home = home.expanduser().resolve()
+    canonical_path = canonical_path.expanduser().resolve()
+    runtime_roots = {
+        "codex": home / ".codex" / "skills",
+        "agents": home / ".agents" / "skills",
+    }
+    selected = ["codex", "agents"] if "all" in targets else targets
+    actions = []
+    for target_name in selected:
+        root = runtime_roots[target_name] if target_name in runtime_roots else Path(target_name).expanduser()
+        install_path = root / skill_name if target_name in runtime_roots else root
+        actions.append(classify_install_action(install_path, canonical_path))
+    return {
+        "stage": "publish_reinstall",
+        "skill_name": skill_name,
+        "canonical_path": str(canonical_path),
+        "actions": actions,
+    }
