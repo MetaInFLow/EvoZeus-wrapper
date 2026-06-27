@@ -17,7 +17,7 @@ PREFLIGHT_SCRIPT = ROOT / "scripts" / "evozeus_wrapper_preflight.py"
 EVOLUTION_SECTION_HEADING = "## 自进化方法"
 LOCAL_PROJECTS_DIR = Path.home() / ".evozeus" / ".projects"
 INITIAL_VERSION = "v0.1.0"
-WRAPPER_VERSION = "v0.1.0"
+WRAPPER_VERSION = "v0.1.1"
 
 
 def fail(message: str) -> None:
