@@ -11,10 +11,11 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 | 项目 | 内容 |
 | --- | --- |
 | Skill | [`SKILL.md`]({{REPO_URL}}/blob/main/SKILL.md) |
-| 本地 Skill 镜像 | `~/.evozeus/.projects/{{REPO_NAME}}/SKILL.md` |
+| EvoZeus 项目指针 | `~/.evozeus/.projects/{{REPO_NAME}}` |
 | Repo | `{{REPO_NAME}}` |
 | Visibility | `{{VISIBILITY}}` |
 | 当前版本 | `{{INITIAL_VERSION}}` |
+| Wrapper manifest | `.evozeus/wrapper.json` |
 | Changelog | [`CHANGELOG.md`]({{REPO_URL}}/blob/main/CHANGELOG.md) |
 | Design docs | [`docs/designs/`](designs/) |
 
@@ -36,7 +37,7 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 python3 scripts/evozeus_wrapper_preflight.py version --repo {{REPO_NAME}}
 ```
 
-每次 Skill 更新必须先写 design doc，再开 PR。根目录 `SKILL.md` 是 repo 化后的可运行入口；`~/.evozeus/.projects/{{REPO_NAME}}/SKILL.md` 保留 bootstrap 时的本地 Skill 项目镜像，用于对照后续演进。
+每次 Skill 更新必须先写 design doc，再开 PR。根目录 `SKILL.md` 是 repo 化后的可运行入口；`~/.evozeus/.projects/{{REPO_NAME}}` 和 runtime 安装路径应指向同一个 canonical repo，不保留 copied install 作为第二事实源。
 
 Design doc 至少回答：
 

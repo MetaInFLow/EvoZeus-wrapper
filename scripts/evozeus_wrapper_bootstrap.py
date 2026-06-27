@@ -8,6 +8,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from evozeus_wrapper_lifecycle import build_wrapper_manifest, write_wrapper_manifest, WRAPPER_MANAGED_FILES
+
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET_TEMPLATE_DIR = ROOT / "templates" / "target"
@@ -15,6 +17,7 @@ PREFLIGHT_SCRIPT = ROOT / "scripts" / "evozeus_wrapper_preflight.py"
 EVOLUTION_SECTION_HEADING = "## 自进化方法"
 LOCAL_PROJECTS_DIR = Path.home() / ".evozeus" / ".projects"
 INITIAL_VERSION = "v0.1.0"
+WRAPPER_VERSION = "v0.1.0"
 
 
 def fail(message: str) -> None:
@@ -233,6 +236,13 @@ def main() -> int:
     actions.extend(copy_templates(target, replacements, args.force))
     actions.extend(preserve_project_skill(target, args.repo, replacements, args.force))
     actions.append(inject_evolution_method(target, replacements))
+    actions.append(
+        write_wrapper_manifest(
+            target,
+            build_wrapper_manifest(args.repo, WRAPPER_VERSION, WRAPPER_MANAGED_FILES, []),
+            args.force,
+        )
+    )
     print("EvoZeus-wrapper bootstrap complete.")
     print(f"Target: {target}")
     print(f"Repo: {args.repo}")

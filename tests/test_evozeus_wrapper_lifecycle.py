@@ -3,12 +3,15 @@ import tempfile
 import unittest
 
 from scripts.evozeus_wrapper_lifecycle import (
+    build_wrapper_manifest,
     diagnose_environment,
     diagnose_skill,
+    load_wrapper_manifest,
     path_kind,
     repo_from_remote,
     skill_name_from_skill_md,
     stage_label,
+    write_wrapper_manifest,
 )
 
 
@@ -142,6 +145,43 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             report = diagnose_skill(target=target, repo=None, skill_name=None, home=home)
             self.assertEqual(report["harness"]["state"], "partial")
             self.assertIn("CHANGELOG.md", report["harness"]["present_files"])
+
+
+class WrapperManifestTest(unittest.TestCase):
+    def test_write_and_load_wrapper_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            manifest = build_wrapper_manifest(
+                repo="MetaInFLow/resume-screening",
+                wrapper_version="v0.2.0",
+                managed_files=["WRAPPER.md", "scripts/evozeus_wrapper_preflight.py"],
+                install_links=["/Users/anthonyf/.codex/skills/resume-screening"],
+            )
+
+            action = write_wrapper_manifest(target, manifest)
+            loaded = load_wrapper_manifest(target)
+
+            self.assertIn("write", action)
+            self.assertEqual(loaded["wrapper_repo"], "MetaInFLow/EvoZeus-wrapper")
+            self.assertEqual(loaded["wrapper_version"], "v0.2.0")
+            self.assertEqual(loaded["canonical_repo"], "MetaInFLow/resume-screening")
+            self.assertEqual(loaded["managed_files"], ["WRAPPER.md", "scripts/evozeus_wrapper_preflight.py"])
+            self.assertEqual(loaded["install_links"], ["/Users/anthonyf/.codex/skills/resume-screening"])
+
+    def test_write_wrapper_manifest_skips_existing_without_force(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            first = build_wrapper_manifest("MetaInFLow/a", "v0.1.0", ["WRAPPER.md"], [])
+            second = build_wrapper_manifest("MetaInFLow/b", "v0.2.0", ["WRAPPER.md"], [])
+
+            write_wrapper_manifest(target, first)
+            action = write_wrapper_manifest(target, second)
+            loaded = load_wrapper_manifest(target)
+
+            self.assertIn("skip existing", action)
+            self.assertEqual(loaded["canonical_repo"], "MetaInFLow/a")
 
 
 if __name__ == "__main__":

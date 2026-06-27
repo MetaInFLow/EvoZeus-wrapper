@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import re
 import hashlib
+import json
 import subprocess
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,21 @@ REQUIRED_WRAPPER_FILES = [
     ".github/workflows/evozeus-wrapper-preflight.yml",
     "scripts/evozeus_wrapper_preflight.py",
 ]
+
+WRAPPER_MANAGED_FILES = [
+    "WRAPPER.md",
+    "docs/index.md",
+    "docs/_config.yml",
+    "docs/design-doc-template.md",
+    "docs/designs/README.md",
+    ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/ISSUE_TEMPLATE/skill-feedback.yml",
+    ".github/pull_request_template.md",
+    ".github/workflows/evozeus-wrapper-preflight.yml",
+    "scripts/evozeus_wrapper_preflight.py",
+]
+
+WRAPPER_REPO = "MetaInFLow/EvoZeus-wrapper"
 
 
 def stage_label(stage: str) -> str:
@@ -157,6 +174,7 @@ def describe_install_path(path: Path, target: Path) -> dict[str, Any]:
 def diagnose_harness_state(target: Path) -> dict[str, Any]:
     present = [rel for rel in REQUIRED_WRAPPER_FILES if (target / rel).exists()]
     missing = [rel for rel in REQUIRED_WRAPPER_FILES if not (target / rel).exists()]
+    manifest = load_wrapper_manifest(target)
     if not present:
         state = "missing"
     elif not missing:
@@ -167,7 +185,7 @@ def diagnose_harness_state(target: Path) -> dict[str, Any]:
         "state": state,
         "present_files": present,
         "missing_files": missing,
-        "wrapper_version": None,
+        "wrapper_version": manifest.get("wrapper_version") if manifest else None,
     }
 
 
@@ -245,3 +263,39 @@ def diagnose_skill(
             "sensitive_risk": "unknown",
         },
     }
+
+
+def wrapper_manifest_path(target: Path) -> Path:
+    return target / ".evozeus" / "wrapper.json"
+
+
+def load_wrapper_manifest(target: Path) -> dict[str, Any] | None:
+    path = wrapper_manifest_path(target)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def build_wrapper_manifest(
+    repo: str,
+    wrapper_version: str,
+    managed_files: list[str],
+    install_links: list[str],
+) -> dict[str, Any]:
+    return {
+        "wrapper_repo": WRAPPER_REPO,
+        "wrapper_version": wrapper_version,
+        "applied_at": date.today().isoformat(),
+        "canonical_repo": repo,
+        "managed_files": managed_files,
+        "install_links": install_links,
+    }
+
+
+def write_wrapper_manifest(target: Path, manifest: dict[str, Any], force: bool = False) -> str:
+    path = wrapper_manifest_path(target)
+    if path.exists() and not force:
+        return f"skip existing {path}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return f"write {path}"
