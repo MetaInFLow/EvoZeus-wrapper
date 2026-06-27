@@ -46,6 +46,8 @@ WRAPPER_MANAGED_FILES = [
 ]
 
 WRAPPER_REPO = "MetaInFLow/EvoZeus-wrapper"
+INITIAL_SKILL_VERSION = "v0.1.0"
+VERSION_HEADER_RE = re.compile(r"^##\s+\[?(v\d+\.\d+\.\d+)\]?\b", re.MULTILINE)
 
 
 def stage_label(stage: str) -> str:
@@ -101,6 +103,142 @@ def run_command(args: list[str], cwd: Path | None = None) -> dict[str, Any]:
     except FileNotFoundError:
         return {"returncode": 127, "stdout": "", "stderr": "command not found"}
     return {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+
+
+def latest_changelog_tag_from_text(changelog: str) -> str | None:
+    match = VERSION_HEADER_RE.search(changelog)
+    return match.group(1) if match else None
+
+
+def latest_changelog_tag(target: Path) -> str | None:
+    changelog = target / "CHANGELOG.md"
+    if not changelog.exists():
+        return None
+    return latest_changelog_tag_from_text(changelog.read_text(encoding="utf-8"))
+
+
+def read_latest_release(repo: str | None, runner=run_command) -> dict[str, Any] | None:
+    if not repo:
+        return None
+    result = runner(["gh", "release", "view", "--repo", repo, "--json", "tagName,url,publishedAt"])
+    if result["returncode"] != 0:
+        return {
+            "exists": False,
+            "tag": None,
+            "url": None,
+            "published_at": None,
+            "error": (result.get("stderr") or result.get("stdout") or "").strip() or "latest release not found",
+        }
+    try:
+        data = json.loads(result.get("stdout") or "{}")
+    except json.JSONDecodeError:
+        return {
+            "exists": False,
+            "tag": None,
+            "url": None,
+            "published_at": None,
+            "error": "could not parse latest release response",
+        }
+    tag = data.get("tagName")
+    if not tag:
+        return {
+            "exists": False,
+            "tag": None,
+            "url": data.get("url"),
+            "published_at": data.get("publishedAt"),
+            "error": "latest release response has no tagName",
+        }
+    return {
+        "exists": True,
+        "tag": tag,
+        "url": data.get("url"),
+        "published_at": data.get("publishedAt"),
+        "error": None,
+    }
+
+
+def diagnose_skill_version(
+    target: Path,
+    repo_exists: bool | None,
+    latest_release: dict[str, Any] | None,
+) -> dict[str, Any]:
+    changelog_tag = latest_changelog_tag(target)
+
+    if repo_exists is False:
+        return {
+            "status": "new_repo_initial_release",
+            "current_tag": INITIAL_SKILL_VERSION,
+            "changelog_tag": changelog_tag,
+            "latest_release_tag": None,
+            "rule": "new bootstrap repos use v0.1.0 as the first Skill release",
+            "requires_owner_choice": False,
+        }
+
+    if repo_exists is None:
+        return {
+            "status": "repo_state_unknown",
+            "current_tag": changelog_tag,
+            "changelog_tag": changelog_tag,
+            "latest_release_tag": None,
+            "rule": "verify GitHub repo state before choosing the Skill version",
+            "requires_owner_choice": True,
+        }
+
+    latest_tag = latest_release.get("tag") if latest_release and latest_release.get("exists") else None
+    if latest_tag:
+        status = "adopt_existing_release"
+        requires_owner_choice = False
+        current_tag = latest_tag
+        rule = "existing repos keep GitHub latest release as the Skill version"
+        if changelog_tag:
+            try:
+                latest_key = version_key(latest_tag)
+                changelog_key = version_key(changelog_tag)
+            except ValueError:
+                return {
+                    "status": "invalid_version_tag",
+                    "current_tag": changelog_tag or latest_tag,
+                    "changelog_tag": changelog_tag,
+                    "latest_release_tag": latest_tag,
+                    "rule": "Skill releases must use vMAJOR.MINOR.PATCH",
+                    "requires_owner_choice": True,
+                }
+            if changelog_key == latest_key:
+                status = "local_matches_latest_release"
+                current_tag = changelog_tag
+            elif changelog_key < latest_key:
+                status = "local_changelog_behind_release"
+                current_tag = changelog_tag
+            else:
+                status = "local_changelog_ahead_of_release"
+                current_tag = changelog_tag
+        return {
+            "status": status,
+            "current_tag": current_tag,
+            "changelog_tag": changelog_tag,
+            "latest_release_tag": latest_tag,
+            "rule": rule,
+            "requires_owner_choice": False,
+        }
+
+    if changelog_tag:
+        return {
+            "status": "github_release_missing_create_from_changelog",
+            "current_tag": changelog_tag,
+            "changelog_tag": changelog_tag,
+            "latest_release_tag": None,
+            "rule": "existing repos without GitHub releases should create a release for the latest changelog tag before runtime use",
+            "requires_owner_choice": False,
+        }
+
+    return {
+        "status": "missing_version_requires_owner_choice",
+        "current_tag": None,
+        "changelog_tag": None,
+        "latest_release_tag": None,
+        "rule": "existing repos must not be reset to v0.1.0; choose or recover the current Skill version first",
+        "requires_owner_choice": True,
+    }
 
 
 def command_status(args: list[str], runner=run_command) -> str:
@@ -191,9 +329,12 @@ def diagnose_harness_state(target: Path) -> dict[str, Any]:
 
 def diagnose_repo_state(target: Path, repo: str | None, home: Path, workspace_roots: list[Path], runner=run_command) -> dict[str, Any]:
     exists_on_github: bool | None = None
+    latest_release: dict[str, Any] | None = None
     if repo:
         view = runner(["gh", "repo", "view", repo, "--json", "nameWithOwner,url,visibility"])
         exists_on_github = view["returncode"] == 0
+        if exists_on_github:
+            latest_release = read_latest_release(repo, runner)
 
     git_root = None
     git_root_result = runner(["git", "-C", str(target), "rev-parse", "--show-toplevel"])
@@ -218,6 +359,7 @@ def diagnose_repo_state(target: Path, repo: str | None, home: Path, workspace_ro
     return {
         "name": repo,
         "exists_on_github": exists_on_github,
+        "latest_release": latest_release,
         "candidates": unique_candidates,
         "canonical_path": unique_candidates[0] if len(unique_candidates) == 1 else None,
         "needs_user_choice": len(unique_candidates) > 1,
@@ -248,6 +390,7 @@ def diagnose_skill(
         if path.exists() or path.is_symlink()
     ]
 
+    repo_state = diagnose_repo_state(target, repo, home, workspace_roots or [], runner)
     return {
         "stage": "target_skill_diagnosis",
         "skill": {
@@ -255,7 +398,8 @@ def diagnose_skill(
             "target_path": str(target),
             "has_skill_md": skill_md.exists(),
         },
-        "repo": diagnose_repo_state(target, repo, home, workspace_roots or [], runner),
+        "repo": repo_state,
+        "version": diagnose_skill_version(target, repo_state["exists_on_github"], repo_state["latest_release"]),
         "installs": installs,
         "harness": diagnose_harness_state(target),
         "publication": {

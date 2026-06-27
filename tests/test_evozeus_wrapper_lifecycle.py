@@ -150,6 +150,54 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             self.assertEqual(report["harness"]["state"], "partial")
             self.assertIn("CHANGELOG.md", report["harness"]["present_files"])
 
+    def test_diagnose_skill_preserves_existing_repo_latest_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text('---\nname: "skill"\n---\n', encoding="utf-8")
+
+            def runner(args, cwd=None):
+                if args[:3] == ["gh", "repo", "view"]:
+                    return {"returncode": 0, "stdout": "", "stderr": ""}
+                if args[:3] == ["gh", "release", "view"]:
+                    return {
+                        "returncode": 0,
+                        "stdout": '{"tagName":"v0.9.6","url":"https://github.com/o/r/releases/tag/v0.9.6","publishedAt":"2026-06-26T17:57:14Z"}',
+                        "stderr": "",
+                    }
+                return {"returncode": 1, "stdout": "", "stderr": ""}
+
+            report = diagnose_skill(target=target, repo="o/r", skill_name=None, home=home, runner=runner)
+
+            self.assertEqual(report["repo"]["latest_release"]["tag"], "v0.9.6")
+            self.assertEqual(report["version"]["status"], "adopt_existing_release")
+            self.assertEqual(report["version"]["current_tag"], "v0.9.6")
+            self.assertFalse(report["version"]["requires_owner_choice"])
+
+    def test_diagnose_skill_uses_changelog_when_existing_repo_has_no_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text('---\nname: "skill"\n---\n', encoding="utf-8")
+            (target / "CHANGELOG.md").write_text("# Changelog\n\n## [v0.3.0] - 2026-06-27\n", encoding="utf-8")
+
+            def runner(args, cwd=None):
+                if args[:3] == ["gh", "repo", "view"]:
+                    return {"returncode": 0, "stdout": "", "stderr": ""}
+                if args[:3] == ["gh", "release", "view"]:
+                    return {"returncode": 1, "stdout": "", "stderr": "release not found"}
+                return {"returncode": 1, "stdout": "", "stderr": ""}
+
+            report = diagnose_skill(target=target, repo="o/r", skill_name=None, home=home, runner=runner)
+
+            self.assertEqual(report["version"]["status"], "github_release_missing_create_from_changelog")
+            self.assertEqual(report["version"]["current_tag"], "v0.3.0")
+            self.assertFalse(report["version"]["requires_owner_choice"])
+
 
 class WrapperManifestTest(unittest.TestCase):
     def test_write_and_load_wrapper_manifest(self):

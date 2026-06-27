@@ -14,7 +14,8 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 | EvoZeus 项目指针 | `~/.evozeus/.projects/{{REPO_NAME}}` |
 | Repo | `{{REPO_NAME}}` |
 | Visibility | `{{VISIBILITY}}` |
-| 当前版本 | `{{INITIAL_VERSION}}` |
+| 当前 Skill 版本 | `{{CURRENT_VERSION}}` |
+| Wrapper harness 版本 | `{{WRAPPER_VERSION}}` |
 | Wrapper manifest | `.evozeus/wrapper.json` |
 | Changelog | [`CHANGELOG.md`]({{REPO_URL}}/blob/main/CHANGELOG.md) |
 | Design docs | [`docs/designs/`](designs/) |

@@ -52,7 +52,14 @@ Use `vMAJOR.MINOR.PATCH`.
 - `MINOR`: new capability, new required evidence rule, or new harness behavior.
 - `PATCH`: wording, examples, bug fixes, validation fixes, or non-breaking clarifications.
 
-Initial wrapped harness release must be `v0.1.0`.
+Initial wrapped release is `v0.1.0` only for a new target repo with no prior Skill release.
+If the target Skill already has a GitHub repo, preserve its existing Skill version:
+
+1. GitHub latest release tag is the current Skill version.
+2. If GitHub has no release but `CHANGELOG.md` has a latest `vMAJOR.MINOR.PATCH` entry, create or verify that release before runtime use.
+3. If neither exists, stop and ask the owner to choose the first Skill version; do not silently reset an existing repo to `v0.1.0`.
+
+Wrapper harness version is a separate axis recorded in `.evozeus/wrapper.json`.
 
 ## Staged Workflow
 
@@ -106,7 +113,7 @@ Initial wrapped harness release must be `v0.1.0`.
 
 8. Confirm root `SKILL.md` contains the self-evolution method and still preserves the original Skill's business rules.
 9. Initialize or reuse git, commit, create the GitHub repo, and push when the user confirms.
-10. Create the initial `v0.1.0` release.
+10. Create the initial `v0.1.0` release only for a new bootstrap repo; for adopt, keep the existing GitHub latest release or owner-confirmed changelog tag.
 11. Enable GitHub Pages from `main` branch `/docs` when supported by repo visibility and GitHub plan.
 12. Run the version checks:
 
@@ -144,7 +151,8 @@ Stop and ask when:
 - The target folder does not contain `SKILL.md`.
 - `git` or `gh` is missing, or `gh auth status` fails.
 - The target repo name is missing or ambiguous.
-- The target GitHub repo already exists.
+- Bootstrap was selected but the target GitHub repo already exists; route to `adopt` instead.
+- An existing repo has no GitHub release and no `CHANGELOG.md` version entry.
 - GitHub repo existence cannot be verified.
 - Visibility is not chosen.
 - The user wants to publish raw private session data, secrets, customer data, or unredacted commercial context.

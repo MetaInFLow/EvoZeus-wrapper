@@ -161,7 +161,8 @@ def build_evolution_section(replacements: dict[str, str]) -> str:
 
 Target repo: `{replacements["REPO_NAME"]}`
 Visibility: `{replacements["VISIBILITY"]}`
-Current version: `{replacements["INITIAL_VERSION"]}`
+Current Skill version: `{replacements["CURRENT_VERSION"]}`
+Wrapper harness version: `{replacements["WRAPPER_VERSION"]}`
 """
 
 
@@ -216,10 +217,12 @@ def main() -> int:
     replacements = {
         "DATE": date.today().isoformat(),
         "INITIAL_VERSION": INITIAL_VERSION,
+        "CURRENT_VERSION": INITIAL_VERSION,
         "REPO_NAME": args.repo,
         "REPO_URL": f"https://github.com/{args.repo}",
         "SKILL_NAME": skill_name,
         "VISIBILITY": visibility,
+        "WRAPPER_VERSION": WRAPPER_VERSION,
     }
 
     actions = [repo_check]

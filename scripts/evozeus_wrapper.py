@@ -137,6 +137,10 @@ def main() -> int:
             "visibility": args.visibility,
             "writes": False,
             "planned_files": planned_files,
+            "version_rule": (
+                "bootstrap uses v0.1.0 as the first Skill release; adopt/repair must preserve the existing "
+                "GitHub latest release or owner-confirmed CHANGELOG version"
+            ),
         }
         print_report(report, args.json, "transform")
         return 0

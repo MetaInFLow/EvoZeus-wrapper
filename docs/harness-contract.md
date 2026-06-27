@@ -116,6 +116,11 @@ python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path
 3. 当前目录只是安装副本时，先查当前 `gh` 用户 repo，再查用户所属 org repo，最后才扩大到公开 repo 搜索。
 4. lesson 候选先进入 GitHub Issue 队列，再决定是否写入 Skill 内部 lesson / pattern。
 5. 安装副本只作为部署目标；GitHub repo clone 才是 canonical source。
+6. 已有 repo 的 Skill release 不能重置为 wrapper 的 `v0.1.0`。版本来源顺序是：
+   - GitHub latest release tag。
+   - `CHANGELOG.md` 最新 `vMAJOR.MINOR.PATCH` 条目，并先为该 tag 创建或确认 GitHub release。
+   - 两者都没有时停止，让 owner 选择首个 Skill version。
+7. `v0.1.0` 只用于新建目标 repo 的首个 wrapped Skill release；wrapper harness version 另由 `.evozeus/wrapper.json` 记录。
 
 ## Data Policy
 

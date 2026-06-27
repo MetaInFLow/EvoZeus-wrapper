@@ -135,6 +135,7 @@ python3 scripts/evozeus_wrapper_preflight.py release --tag v0.1.0 --release-note
 - Doctor：必须能找到 `git`、`gh`，`gh auth status` 必须通过；如果目标有 origin remote，origin 必须是可访问的 GitHub repo；如果是安装副本或非 git 目录，必须显式传 `--repo` 或能发现候选 repo。bootstrap 阶段目标 repo 尚未创建时，使用 `--allow-missing-repo`。
 - Structure：目标 repo 必须包含 wrapper 文件，且根目录 `SKILL.md` 必须描述自进化方法和 canonical repo pointer。
 - Version：运行 Skill 前必须检查 GitHub latest release；如果远端 release 比本地 `CHANGELOG.md` 新，先更新再运行。
+- Existing repo version：如果目标 Skill 已经有 GitHub repo，不得把 Skill 版本重置为 `v0.1.0`。先取 GitHub latest release tag；如果没有 release 但 `CHANGELOG.md` 有最新 `vMAJOR.MINOR.PATCH` 条目，先为该 tag 创建或确认 release；两者都没有时停止并让 owner 选择首个 Skill 版本。
 - Harness：目标 repo 的 `.evozeus/wrapper.json` 记录 wrapper harness version；Skill release 与 wrapper version 必须分开检查。
 - Issue：必须符合反馈模板，说明不满意结果、期望结果、复现场景、证据边界和影响程度。
 - PR：必须有 design doc，且 design doc 说明修复 issue、优化目标、优化方向、实现方式和验证计划。
@@ -149,7 +150,7 @@ python3 scripts/evozeus_wrapper_preflight.py release --tag v0.1.0 --release-note
 - `MINOR`：新增能力、新增必需证据规则、新增 harness 行为。
 - `PATCH`：文案、示例、bug fix、校验修复或不破坏兼容性的澄清。
 
-初始 harness release 固定使用 `v0.1.0`。
+新建目标 repo 的首个 wrapped Skill release 使用 `v0.1.0`。已有 repo 走 `adopt`，保留既有 Skill release；`.evozeus/wrapper.json` 中的 wrapper harness version 是另一条版本轴。
 
 ## 边界
 
