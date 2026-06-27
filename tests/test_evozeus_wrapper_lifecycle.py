@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 from scripts.evozeus_wrapper_lifecycle import (
+    diagnose_environment,
     path_kind,
     repo_from_remote,
     skill_name_from_skill_md,
@@ -48,6 +49,44 @@ class LifecycleBasicsTest(unittest.TestCase):
             no_name = Path(tmp) / "NO_NAME.md"
             no_name.write_text("# Body\n", encoding="utf-8")
             self.assertIsNone(skill_name_from_skill_md(no_name))
+
+
+class EnvironmentDiagnosisTest(unittest.TestCase):
+    def test_diagnose_environment_reports_home_and_dependencies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            evozeus_home = home / ".evozeus"
+            evozeus_home.mkdir()
+            (evozeus_home / "runtime").mkdir()
+            (evozeus_home / ".projects").mkdir()
+
+            def runner(args, cwd=None):
+                return {"returncode": 0, "stdout": "", "stderr": ""}
+
+            report = diagnose_environment(home=home, runner=runner)
+            self.assertEqual(report["stage"], "environment_diagnosis")
+            self.assertEqual(report["evozeus_home"]["exists"], True)
+            self.assertEqual(report["evozeus_home"]["runtime_exists"], True)
+            self.assertEqual(report["evozeus_home"]["projects_exists"], True)
+            self.assertEqual(report["mother_repo"]["remote"], "MetaInFLow/EvoZeus")
+            self.assertEqual(report["dependencies"]["git"], "ok")
+            self.assertEqual(report["dependencies"]["gh"], "ok")
+            self.assertEqual(report["dependencies"]["gh_auth"], "ok")
+
+    def test_diagnose_environment_reports_missing_home_and_failed_auth(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+
+            def runner(args, cwd=None):
+                if args[:3] == ["gh", "auth", "status"]:
+                    return {"returncode": 1, "stdout": "", "stderr": "not logged in"}
+                return {"returncode": 0, "stdout": "", "stderr": ""}
+
+            report = diagnose_environment(home=home, runner=runner)
+            self.assertEqual(report["evozeus_home"]["exists"], False)
+            self.assertEqual(report["dependencies"]["git"], "ok")
+            self.assertEqual(report["dependencies"]["gh"], "ok")
+            self.assertEqual(report["dependencies"]["gh_auth"], "failed")
 
 
 if __name__ == "__main__":
