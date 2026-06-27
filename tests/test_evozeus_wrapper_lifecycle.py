@@ -4,6 +4,8 @@ import unittest
 
 from scripts.evozeus_wrapper_lifecycle import (
     build_wrapper_manifest,
+    classify_pr_permission,
+    classify_wrapper_upgrade,
     diagnose_environment,
     diagnose_skill,
     load_wrapper_manifest,
@@ -251,6 +253,20 @@ class ReinstallPlanningTest(unittest.TestCase):
             plan = plan_reinstall("skill", canonical, home, ["codex"])
 
             self.assertEqual(plan["actions"][0]["action"], "needs_user_confirmation")
+
+
+class EvolutionAndUpgradePlanningTest(unittest.TestCase):
+    def test_classify_pr_permission(self):
+        self.assertEqual(classify_pr_permission(write=True, fork=True), "direct_pr")
+        self.assertEqual(classify_pr_permission(write=False, fork=True), "fork_pr")
+        self.assertEqual(classify_pr_permission(write=False, fork=False), "local_patch")
+
+    def test_classify_wrapper_upgrade(self):
+        self.assertEqual(classify_wrapper_upgrade("v0.1.0", "v0.1.0", managed_dirty=False), "up_to_date")
+        self.assertEqual(classify_wrapper_upgrade("v0.1.0", "v0.1.1", managed_dirty=False), "auto_pr")
+        self.assertEqual(classify_wrapper_upgrade("v0.1.0", "v0.2.0", managed_dirty=True), "needs_merge_review")
+        self.assertEqual(classify_wrapper_upgrade("v0.1.0", "v1.0.0", managed_dirty=False), "requires_confirmation")
+        self.assertEqual(classify_wrapper_upgrade("v0.2.0", "v0.1.0", managed_dirty=False), "local_ahead")
 
 
 if __name__ == "__main__":

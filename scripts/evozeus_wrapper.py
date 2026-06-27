@@ -11,6 +11,9 @@ from evozeus_wrapper_lifecycle import (
     diagnose_environment,
     diagnose_skill,
     plan_reinstall,
+    classify_pr_permission,
+    classify_wrapper_upgrade,
+    load_wrapper_manifest,
     run_command,
     stage_label,
 )
@@ -57,6 +60,31 @@ def main() -> int:
     reinstall.add_argument("--target", action="append", required=True, help="codex, agents, all, or an explicit install path.")
     reinstall.add_argument("--dry-run", action="store_true", help="Only print planned reinstall actions.")
     reinstall.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
+
+    loop = sub.add_parser("loop", help="Continuous evolution loop commands.")
+    loop_sub = loop.add_subparsers(dest="command", required=True)
+    lesson = loop_sub.add_parser("lesson", help="Plan lesson candidate intake.")
+    lesson.add_argument("--dry-run", action="store_true", help="Only print next action.")
+    lesson.add_argument("--json", action="store_true")
+    issue_to_pr = loop_sub.add_parser("issue-to-pr", help="Plan Issue-to-PR flow.")
+    issue_to_pr.add_argument("--write-permission", action="store_true")
+    issue_to_pr.add_argument("--fork-permission", action="store_true")
+    issue_to_pr.add_argument("--dry-run", action="store_true", help="Only print next action.")
+    issue_to_pr.add_argument("--json", action="store_true")
+
+    harness = sub.add_parser("harness", help="Wrapper harness maintenance commands.")
+    harness_sub = harness.add_subparsers(dest="command", required=True)
+    upgrade_check = harness_sub.add_parser("upgrade-check", help="Check target wrapper harness version.")
+    upgrade_check.add_argument("--target", required=True)
+    upgrade_check.add_argument("--latest-version", help="Latest wrapper version, such as v0.2.0.")
+    upgrade_check.add_argument("--managed-dirty", action="store_true")
+    upgrade_check.add_argument("--json", action="store_true")
+    upgrade = harness_sub.add_parser("upgrade", help="Plan wrapper harness upgrade.")
+    upgrade.add_argument("--target", required=True)
+    upgrade.add_argument("--latest-version", required=True)
+    upgrade.add_argument("--managed-dirty", action="store_true")
+    upgrade.add_argument("--dry-run", action="store_true")
+    upgrade.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
     if args.group == "env" and args.command == "diagnose":
@@ -118,6 +146,67 @@ def main() -> int:
             return 1
         report = plan_reinstall(args.skill_name, Path(args.canonical_path), Path.home(), args.target)
         print_report(report, args.json, "publish")
+        return 0
+    if args.group == "loop" and args.command == "lesson":
+        if not args.dry_run:
+            print("lesson submission requires explicit confirmation and is not implemented in this command yet", file=sys.stderr)
+            return 1
+        report = {
+            "stage": "continuous_evolution_loop",
+            "flow": "lesson_intake",
+            "writes": False,
+            "next_action": "ask_user_whether_to_submit_lesson",
+        }
+        print_report(report, args.json, "loop")
+        return 0
+    if args.group == "loop" and args.command == "issue-to-pr":
+        if not args.dry_run:
+            print("Issue-to-PR writes require explicit confirmation and are not implemented yet", file=sys.stderr)
+            return 1
+        report = {
+            "stage": "continuous_evolution_loop",
+            "flow": "issue_to_pr",
+            "writes": False,
+            "permission_mode": classify_pr_permission(args.write_permission, args.fork_permission),
+        }
+        print_report(report, args.json, "loop")
+        return 0
+    if args.group == "harness" and args.command == "upgrade-check":
+        manifest = load_wrapper_manifest(Path(args.target))
+        current = manifest.get("wrapper_version") if manifest else None
+        latest = args.latest_version or current
+        status = "missing_manifest" if not current else "latest_unknown"
+        if current and latest:
+            status = classify_wrapper_upgrade(current, latest, args.managed_dirty)
+        report = {
+            "stage": "harness_upgrade",
+            "target": args.target,
+            "current_version": current,
+            "latest_version": latest,
+            "managed_dirty": args.managed_dirty,
+            "upgrade_status": status,
+        }
+        print_report(report, args.json, "loop")
+        return 0
+    if args.group == "harness" and args.command == "upgrade":
+        if not args.dry_run:
+            print("harness upgrade writes require explicit confirmation and are not implemented yet", file=sys.stderr)
+            return 1
+        manifest = load_wrapper_manifest(Path(args.target))
+        current = manifest.get("wrapper_version") if manifest else None
+        status = "missing_manifest" if not current else classify_wrapper_upgrade(
+            current, args.latest_version, args.managed_dirty
+        )
+        report = {
+            "stage": "harness_upgrade",
+            "target": args.target,
+            "writes": False,
+            "current_version": current,
+            "latest_version": args.latest_version,
+            "managed_dirty": args.managed_dirty,
+            "upgrade_status": status,
+        }
+        print_report(report, args.json, "loop")
         return 0
 
     parser.error("unsupported command")

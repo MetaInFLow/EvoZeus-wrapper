@@ -374,3 +374,32 @@ def plan_reinstall(skill_name: str, canonical_path: Path, home: Path, targets: l
         "canonical_path": str(canonical_path),
         "actions": actions,
     }
+
+
+def version_key(tag: str) -> tuple[int, int, int]:
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag)
+    if not match:
+        raise ValueError(f"version tag must use vMAJOR.MINOR.PATCH format: {tag}")
+    return tuple(int(part) for part in match.groups())
+
+
+def classify_pr_permission(write: bool, fork: bool) -> str:
+    if write:
+        return "direct_pr"
+    if fork:
+        return "fork_pr"
+    return "local_patch"
+
+
+def classify_wrapper_upgrade(current: str, latest: str, managed_dirty: bool) -> str:
+    current_key = version_key(current)
+    latest_key = version_key(latest)
+    if latest_key == current_key:
+        return "up_to_date"
+    if latest_key < current_key:
+        return "local_ahead"
+    if latest_key[0] > current_key[0]:
+        return "requires_confirmation"
+    if managed_dirty:
+        return "needs_merge_review"
+    return "auto_pr"
