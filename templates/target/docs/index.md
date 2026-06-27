@@ -33,6 +33,8 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 
 ## 进化规则
 
+`SKILL.md` 的 frontmatter 后第一段必须是 `EvoZeus-wrapper 状态检查`。该状态检查先确认当前 Skill release、wrapper harness version 和 source contract；全部 OK 后，才进入目标 Skill 原本主链路。
+
 Wrapper-managed Skill 的源头发现顺序固定：
 
 1. 读取 `.evozeus/wrapper.json`。
@@ -57,7 +59,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path
 python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/this-skill --latest-version <wrapper-version> --dry-run --json
 ```
 
-迁移记录写入 `docs/wrapper-migrations/`，并记录 from/to wrapper version、planned files、`SKILL.md` append-only 处理、验证命令和回滚方案。wrapper harness version 的事实源是 `.evozeus/wrapper.json`；Skill release 仍以 GitHub release 和 `CHANGELOG.md` 为准。
+迁移记录写入 `docs/wrapper-migrations/`，并记录 from/to wrapper version、planned files、`SKILL.md` 状态检查处理、append-only 处理、验证命令和回滚方案。wrapper harness version 的事实源是 `.evozeus/wrapper.json`；Skill release 仍以 GitHub release 和 `CHANGELOG.md` 为准。
 
 Design doc 至少回答：
 
@@ -73,7 +75,7 @@ Design doc 至少回答：
 使用 `vMAJOR.MINOR.PATCH`：
 
 - `MAJOR`：不兼容的 Skill 行为或输出格式变化。
-- `MINOR`：新增筛选能力、必需证据规则或 harness 行为。
+- `MINOR`：新增能力、必需证据规则或 harness 行为。
 - `PATCH`：文案、示例、bug fix、校验修复或不破坏兼容性的澄清。
 
 ## 上传前检查

@@ -75,7 +75,7 @@ def main() -> int:
     harness_sub = harness.add_subparsers(dest="command", required=True)
     upgrade_check = harness_sub.add_parser("upgrade-check", help="Check target wrapper harness version.")
     upgrade_check.add_argument("--target", required=True)
-    upgrade_check.add_argument("--latest-version", help="Latest wrapper version, such as v0.2.0.")
+    upgrade_check.add_argument("--latest-version", help="Latest wrapper version, such as v0.3.0.")
     upgrade_check.add_argument("--managed-dirty", action="store_true")
     upgrade_check.add_argument("--json", action="store_true")
     upgrade = harness_sub.add_parser("upgrade", help="Plan wrapper harness upgrade.")
@@ -129,6 +129,7 @@ def main() -> int:
             return 1
         planned_files = REQUIRED_WRAPPER_FILES + [
             ".evozeus/wrapper.json",
+            "SKILL.md EvoZeus-wrapper status check section",
             "SKILL.md self-evolution section",
             "SKILL.md EvoZeus-wrapper section",
         ]

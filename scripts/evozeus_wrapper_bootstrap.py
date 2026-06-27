@@ -14,11 +14,12 @@ from evozeus_wrapper_lifecycle import build_wrapper_manifest, write_wrapper_mani
 ROOT = Path(__file__).resolve().parents[1]
 TARGET_TEMPLATE_DIR = ROOT / "templates" / "target"
 PREFLIGHT_SCRIPT = ROOT / "scripts" / "evozeus_wrapper_preflight.py"
+STATUS_SECTION_HEADING = "## EvoZeus-wrapper 状态检查"
 EVOLUTION_SECTION_HEADING = "## 自进化方法"
 WRAPPER_SECTION_HEADING = "## EvoZeus-wrapper"
 LOCAL_PROJECTS_DIR = Path.home() / ".evozeus" / ".projects"
 INITIAL_VERSION = "v0.1.0"
-WRAPPER_VERSION = "v0.2.0"
+WRAPPER_VERSION = "v0.3.0"
 
 
 def fail(message: str) -> None:
@@ -180,6 +181,30 @@ Wrapper harness version: `{replacements["WRAPPER_VERSION"]}`
 """
 
 
+def build_status_section(replacements: dict[str, str]) -> str:
+    return f"""\
+{STATUS_SECTION_HEADING}
+
+执行本 Skill 主链路前，先完成状态检查；只有检查结果为 OK，才继续进入下方原 Skill 流程。
+
+1. Skill release 状态
+   - 当前记录版本：`{replacements["CURRENT_VERSION"]}`
+   - 检查命令：`python3 scripts/evozeus_wrapper_preflight.py version --repo {replacements["REPO_NAME"]}`
+   - 如果 GitHub latest release 更新：先更新 canonical repo，并确认 runtime install 仍指向 canonical repo。
+   - 如果本地版本领先 GitHub release：先完成 changelog、验证和 `vMAJOR.MINOR.PATCH` release，再把它当作稳定运行版本。
+2. Wrapper harness 状态
+   - 当前 wrapper 版本：`{replacements["WRAPPER_VERSION"]}`
+   - 事实源：`.evozeus/wrapper.json`
+   - 检查命令：在 EvoZeus-wrapper repo 运行 `python3 scripts/evozeus_wrapper.py harness upgrade-check --target <this-skill-repo> --latest-version <wrapper-version> --json`
+   - 如果 wrapper 落后：先运行 `harness upgrade --dry-run` 生成迁移方案，再按状态检查前置、其他 wrapper 内容 append-only 的规则迁移。
+3. Source contract 状态
+   - 检查命令：`python3 scripts/evozeus_wrapper_preflight.py doctor --repo {replacements["REPO_NAME"]}`
+   - 如果 `.evozeus/.projects`、git origin 或 runtime install 不一致：先修复为同一个 canonical repo，再继续。
+
+解决顺序：先修 source contract，再修 wrapper harness，最后处理 Skill release。全部 OK 后，再进入主链路。
+"""
+
+
 def build_wrapper_section(replacements: dict[str, str]) -> str:
     return f"""\
 {WRAPPER_SECTION_HEADING}
@@ -204,7 +229,7 @@ def build_wrapper_section(replacements: dict[str, str]) -> str:
 
 Append-only 迁移规则：
 
-- wrapper 升级只能追加本区缺失内容、`docs/wrapper-migrations/` 迁移记录，或更新 wrapper-managed files；不要重写原 Skill 业务段落。
+- wrapper 升级必须保留 frontmatter 后的状态检查；其他 `SKILL.md` wrapper 内容只能追加本区缺失内容或 migration note，不要重写原 Skill 业务段落。
 - 如果本区已存在，升级时追加 migration note，不改写旧文本。
 - 每次 wrapper 升级必须记录 from/to wrapper version、planned files、验证命令、回滚方案和是否需要人工 merge review。
 - wrapper version 事实源是 `.evozeus/wrapper.json` 的 `wrapper_version`；Skill release 仍以 GitHub release / `CHANGELOG.md` 为准。
@@ -215,10 +240,40 @@ Wrapper migration log: `docs/wrapper-migrations/`
 """
 
 
+def has_heading(text: str, heading: str) -> bool:
+    return any(line.strip() == heading for line in text.splitlines())
+
+
+def content_insert_index(text: str) -> int:
+    if not text.startswith("---\n"):
+        return 0
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return 0
+    return end + len("\n---\n")
+
+
+def prepend_status_section_if_missing(target: Path, section: str) -> str:
+    skill_path = target / "SKILL.md"
+    text = skill_path.read_text(encoding="utf-8")
+    if has_heading(text, STATUS_SECTION_HEADING):
+        return f"skip existing {STATUS_SECTION_HEADING} in {skill_path}"
+
+    insert_at = content_insert_index(text)
+    prefix = text[:insert_at].rstrip()
+    suffix = text[insert_at:].lstrip()
+    if prefix:
+        updated = prefix + "\n\n" + section.rstrip() + "\n\n" + suffix
+    else:
+        updated = section.rstrip() + "\n\n" + suffix
+    skill_path.write_text(updated.rstrip() + "\n", encoding="utf-8")
+    return f"prepend {STATUS_SECTION_HEADING} to {skill_path}"
+
+
 def append_section_if_missing(target: Path, heading: str, section: str) -> str:
     skill_path = target / "SKILL.md"
     text = skill_path.read_text(encoding="utf-8")
-    if heading in text:
+    if has_heading(text, heading):
         return f"skip existing {heading} in {skill_path}"
 
     updated = text.rstrip() + "\n\n" + section.rstrip() + "\n"
@@ -228,6 +283,7 @@ def append_section_if_missing(target: Path, heading: str, section: str) -> str:
 
 def inject_evolution_method(target: Path, replacements: dict[str, str]) -> list[str]:
     return [
+        prepend_status_section_if_missing(target, build_status_section(replacements)),
         append_section_if_missing(target, EVOLUTION_SECTION_HEADING, build_evolution_section(replacements)),
         append_section_if_missing(target, WRAPPER_SECTION_HEADING, build_wrapper_section(replacements)),
     ]

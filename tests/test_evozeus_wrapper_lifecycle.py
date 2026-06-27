@@ -458,11 +458,13 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertEqual(plan["current_version"], "v0.1.1")
             self.assertEqual(plan["latest_version"], "v0.2.0")
             self.assertTrue(plan["append_only"])
+            self.assertTrue(plan["status_check_first"])
             self.assertFalse(plan["requires_confirmation"])
             self.assertEqual(
                 plan["migration"]["doc_path"],
                 "docs/wrapper-migrations/2026-06-27-v0.1.1-to-v0.2.0.md",
             )
+            self.assertIn("SKILL.md EvoZeus-wrapper status check section (front matter prelude)", plan["planned_files"])
             self.assertIn("SKILL.md EvoZeus-wrapper section or migration note (append only)", plan["planned_files"])
             self.assertIn("docs/wrapper-migrations/README.md", plan["planned_files"])
             self.assertIn(".evozeus/wrapper.json", plan["planned_files"])

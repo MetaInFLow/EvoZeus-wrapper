@@ -45,5 +45,5 @@ Every release must include:
 Release tags must use `vMAJOR.MINOR.PATCH`:
 
 - `MAJOR`: incompatible Skill behavior or output contract change.
-- `MINOR`: new screening capability, new required evidence rule, or new harness behavior.
+- `MINOR`: new capability, new required evidence rule, or new harness behavior.
 - `PATCH`: wording, examples, bug fixes, validation fixes, or non-breaking clarifications.

@@ -50,6 +50,7 @@ WRAPPER_MANAGED_FILES = [
 WRAPPER_REPO = "MetaInFLow/EvoZeus-wrapper"
 INITIAL_SKILL_VERSION = "v0.1.0"
 VERSION_HEADER_RE = re.compile(r"^##\s+\[?(v\d+\.\d+\.\d+)\]?\b", re.MULTILINE)
+SKILL_STATUS_SECTION = "SKILL.md EvoZeus-wrapper status check section (front matter prelude)"
 SKILL_WRAPPER_SECTION = "SKILL.md EvoZeus-wrapper section or migration note (append only)"
 WRAPPER_MIGRATION_README = "docs/wrapper-migrations/README.md"
 
@@ -716,6 +717,7 @@ def plan_harness_upgrade(
     if needs_upgrade or needs_repair:
         planned_files.extend(
             [
+                SKILL_STATUS_SECTION,
                 SKILL_WRAPPER_SECTION,
                 ".evozeus/wrapper.json",
                 WRAPPER_MIGRATION_README,
@@ -767,9 +769,11 @@ def plan_harness_upgrade(
         "upgrade_status": status,
         "recommended_action": recommended_action,
         "requires_confirmation": status in {"missing_manifest", "latest_unknown", "needs_merge_review", "requires_confirmation"},
+        "status_check_first": True,
         "append_only": True,
         "skill_md_policy": (
-            "append the EvoZeus-wrapper section or a wrapper migration note; never rewrite target Skill business rules"
+            "add or refresh the wrapper-owned status prelude before the main chain, then append the "
+            "EvoZeus-wrapper section or a migration note; never rewrite target Skill business rules"
         ),
         "migration": {
             "from_wrapper_version": current,
@@ -783,6 +787,7 @@ def plan_harness_upgrade(
             "Read .evozeus/wrapper.json and confirm canonical_repo before touching runtime installs.",
             "Diff wrapper-managed files; if they contain local edits, stop for merge review.",
             "Copy or merge wrapper-managed files only.",
+            "Add the EvoZeus-wrapper status check immediately after SKILL.md frontmatter if missing.",
             "Append the EvoZeus-wrapper section if missing; otherwise append a migration note instead of editing old text.",
             "Write a migration record under docs/wrapper-migrations/ with from/to wrapper versions, validation, and rollback.",
             "Update .evozeus/wrapper.json wrapper_version after validation passes.",
