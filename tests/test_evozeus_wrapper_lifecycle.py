@@ -77,6 +77,21 @@ class LifecycleBasicsTest(unittest.TestCase):
         self.assertIn("The CLI scripts collect facts. This Skill makes the judgment.", text)
         self.assertIn("Do not treat `evolution_surface.candidates` as final placement.", text)
 
+    def test_root_skill_is_thin_and_routes_to_using_skill(self):
+        root = Path("SKILL.md")
+        text = root.read_text(encoding="utf-8")
+        self.assertLessEqual(len(text.splitlines()), 60)
+        self.assertIn("skills/using-evozeus-wrapper/SKILL.md", text)
+        self.assertIn("This root Skill is only the wrapper entrypoint", text)
+
+    def test_using_evozeus_wrapper_is_operating_skill(self):
+        skill = Path("skills/using-evozeus-wrapper/SKILL.md")
+        text = skill.read_text(encoding="utf-8")
+        self.assertIn("name: using-evozeus-wrapper", text)
+        self.assertIn("Use this Skill as the operating guide for EvoZeus-wrapper.", text)
+        self.assertIn("Do not treat script-produced `evolution_surface.candidates` as final placement.", text)
+        self.assertNotIn("TODO", text)
+
     def test_preflight_root_entry_path_uses_manifest_instruction_surface(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "hooked-skill-system"
