@@ -55,8 +55,8 @@ python3 scripts/evozeus_wrapper.py env diagnose --json
 python3 scripts/evozeus_wrapper.py skill diagnose --target /absolute/path/to/my-skill-or-runtime-kit --repo MetaInFLow/my-skill --json
 python3 scripts/evozeus_wrapper.py skill transform --mode bootstrap --target /absolute/path/to/my-skill --repo MetaInFLow/my-skill --instruction-surface <relative path> --visibility private --dry-run --json
 python3 scripts/evozeus_wrapper.py publish reinstall --skill-name my-skill --canonical-path /absolute/path/to/my-skill --target codex --dry-run --json
-python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/my-skill --latest-version v0.3.0 --json
-python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/my-skill --latest-version v0.3.0 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/my-skill --latest-version v0.4.0 --json
+python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/my-skill --latest-version v0.4.0 --dry-run --json
 ```
 
 如果 `env diagnose` 返回 `next_action: install_evozeus`，先安装 / 初始化 EvoZeus，不进入目标 repo transform。如果没有给 `Visibility`，Agent 必须先问用户选择 `public` 还是 `private`。如果本地发现多个 repo clone 或多个 real-directory 安装副本，必须先让用户选择 canonical repo 或归档策略。

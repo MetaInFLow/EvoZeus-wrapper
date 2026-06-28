@@ -143,8 +143,8 @@ Instruction placement is decided by behavior control, not by filename convention
 
    ```bash
    python3 scripts/evozeus_wrapper_preflight.py version --repo OWNER/REPO
-   python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/target-skill --latest-version v0.3.0 --json
-   python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/target-skill --latest-version v0.3.0 --dry-run --json
+   python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/target-skill --latest-version v0.4.0 --json
+   python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/target-skill --latest-version v0.4.0 --dry-run --json
    ```
 
 14. Return the repo URL, Pages URL if available, release URL, files added, preflight result, and reinstall plan.
