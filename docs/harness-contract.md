@@ -106,8 +106,8 @@ python3 scripts/evozeus_wrapper.py skill transform --mode bootstrap --target /ab
 python3 scripts/evozeus_wrapper.py publish reinstall --skill-name skill-name --canonical-path /absolute/path/to/repo --target codex --dry-run --json
 python3 scripts/evozeus_wrapper.py loop lesson --dry-run --json
 python3 scripts/evozeus_wrapper.py loop issue-to-pr --dry-run --json
-python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --latest-version v0.3.0 --json
-python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.3.0 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --latest-version v0.4.0 --json
+python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.4.0 --dry-run --json
 ```
 
 写入、发布、替换安装副本、创建 Issue、创建 PR、启用 Pages 都必须在诊断报告之后进入用户确认。

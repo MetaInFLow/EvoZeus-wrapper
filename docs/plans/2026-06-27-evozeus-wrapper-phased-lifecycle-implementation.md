@@ -1,6 +1,6 @@
 # EvoZeus-wrapper Phased Lifecycle Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Use the repo's development execution Skill or plan-execution process to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement the phased EvoZeus-wrapper lifecycle from diagnosis through transform, reinstall, evolution loop scaffolding, and harness upgrade checks.
 

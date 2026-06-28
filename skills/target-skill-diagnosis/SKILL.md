@@ -1,6 +1,6 @@
 ---
 name: evozeus-wrapper-target-skill-diagnosis
-description: Use when identifying the target Skill, local installs, candidate repos, GitHub repo state, harness state, and publication boundary.
+description: Use when identifying the target Skill, AGENTS.md-root runtime kit, or hook/plugin-controlled Skill bundle; local installs; candidate repos; GitHub repo state; harness state; architecture; evolution surface; component gaps; and publication boundary.
 ---
 
 # Target Skill Diagnosis
@@ -9,9 +9,9 @@ Use this stage after environment diagnosis and before bootstrap, adopt, repair, 
 
 ## Required Inputs
 
-- Target Skill folder.
+- Target folder. It may be a single Skill with root `SKILL.md`, a runtime kit with root `AGENTS.md` and `skills/*/SKILL.md`, or a hook/plugin-controlled bundle where a startup hook loads a control Skill.
 - Target GitHub repo in `OWNER/REPO` format when known.
-- Skill name override only when `SKILL.md` cannot identify it.
+- Skill name override only when the target surface cannot identify it.
 
 ## Command
 
@@ -26,11 +26,28 @@ python3 scripts/evozeus_wrapper.py skill diagnose \
 
 Ask the user only when:
 
-- The target path is missing or does not contain `SKILL.md`.
+- The target path is missing or has no detectable evolution surface.
 - Multiple local repos can be the canonical source.
 - Multiple install copies differ from the canonical repo.
 - Visibility is not explicitly `public` or `private`.
 - Private data could enter docs, Issues, release notes, or Pages.
+
+## Required Order
+
+1. Confirm environment diagnosis has passed. If `~/.evozeus` is missing, install / initialize EvoZeus before target transform.
+2. Check GitHub repo access, visibility, default branch, and current account permission.
+3. Classify the target architecture:
+   - `single_skill`
+   - `runtime_skill_bundle`
+   - `hooked_skill_bundle`
+   - `skill_bundle`
+   - `agents_runtime`
+   - `unknown`
+4. Report Skill inventory from `skills/*/SKILL.md` when present.
+5. Report `evolution_surface` facts: candidate instruction surfaces, controller files, and evidence boundaries. Do not treat script candidates as final placement.
+6. Use `skills/evolution-surface-diagnosis/SKILL.md` to browse the whole repo and choose the controlling instruction surface.
+7. Report `component_gaps`: missing wrapper files, manifest, changelog, and status-check concept after the surface decision is known.
+8. Hand the diagnosis JSON and surface decision to `skills/status-assessment/SKILL.md`; do not write user-facing status analysis in the script.
 
 ## Stop Conditions
 

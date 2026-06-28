@@ -7,6 +7,7 @@ from scripts.evozeus_wrapper_lifecycle import (
     build_wrapper_manifest,
     classify_pr_permission,
     classify_wrapper_upgrade,
+    detect_target_architecture,
     diagnose_environment,
     diagnose_skill,
     diagnose_source_contract,
@@ -20,6 +21,7 @@ from scripts.evozeus_wrapper_lifecycle import (
     stage_label,
     write_wrapper_manifest,
 )
+from scripts.evozeus_wrapper_preflight import root_entry_path as preflight_root_entry_path
 
 
 class LifecycleBasicsTest(unittest.TestCase):
@@ -61,6 +63,55 @@ class LifecycleBasicsTest(unittest.TestCase):
             no_name.write_text("# Body\n", encoding="utf-8")
             self.assertIsNone(skill_name_from_skill_md(no_name))
 
+    def test_status_assessment_is_documented_as_a_skill(self):
+        skill = Path("skills/status-assessment/SKILL.md")
+        text = skill.read_text(encoding="utf-8")
+        self.assertIn("name: evozeus-wrapper-status-assessment", text)
+        self.assertIn("The CLI scripts provide facts. This Skill provides judgment", text)
+        self.assertIn("Do not move user-facing assessment logic into Python scripts.", text)
+
+    def test_evolution_surface_diagnosis_is_documented_as_a_skill(self):
+        skill = Path("skills/evolution-surface-diagnosis/SKILL.md")
+        text = skill.read_text(encoding="utf-8")
+        self.assertIn("name: evozeus-wrapper-evolution-surface-diagnosis", text)
+        self.assertIn("The CLI scripts collect facts. This Skill makes the judgment.", text)
+        self.assertIn("Do not treat `evolution_surface.candidates` as final placement.", text)
+
+    def test_preflight_root_entry_path_uses_manifest_instruction_surface(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "hooked-skill-system"
+            target.mkdir()
+            (target / ".codex-plugin").mkdir()
+            (target / ".codex-plugin" / "plugin.json").write_text(
+                '{"skills":"./skills/","hooks":"./hooks/hooks-codex.json"}',
+                encoding="utf-8",
+            )
+            (target / "hooks").mkdir()
+            (target / "hooks" / "hooks-codex.json").write_text(
+                '{"hooks":{"session-start":"skills/session-bootstrap/SKILL.md"}}',
+                encoding="utf-8",
+            )
+            skill_dir = target / "skills" / "session-bootstrap"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                '---\nname: "session-bootstrap"\n---\n# Session Bootstrap\nUse at session start to load skills.\n',
+                encoding="utf-8",
+            )
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest(
+                    "MetaInFLow/hooked-skill-system",
+                    "v0.1.0",
+                    [],
+                    [],
+                    instruction_surface="skills/session-bootstrap/SKILL.md",
+                ),
+            )
+
+            entry = preflight_root_entry_path(target)
+
+            self.assertEqual(str(entry.relative_to(target)), "skills/session-bootstrap/SKILL.md")
+
 
 class EnvironmentDiagnosisTest(unittest.TestCase):
     def test_diagnose_environment_reports_home_and_dependencies(self):
@@ -76,7 +127,9 @@ class EnvironmentDiagnosisTest(unittest.TestCase):
 
             report = diagnose_environment(home=home, runner=runner)
             self.assertEqual(report["stage"], "environment_diagnosis")
+            self.assertEqual(report["next_action"], "continue_to_target_repo_diagnosis")
             self.assertEqual(report["evozeus_home"]["exists"], True)
+            self.assertEqual(report["evozeus_home"]["required_action"], "none")
             self.assertEqual(report["evozeus_home"]["runtime_exists"], True)
             self.assertEqual(report["evozeus_home"]["projects_exists"], True)
             self.assertEqual(report["mother_repo"]["remote"], "MetaInFLow/EvoZeus")
@@ -94,7 +147,9 @@ class EnvironmentDiagnosisTest(unittest.TestCase):
                 return {"returncode": 0, "stdout": "", "stderr": ""}
 
             report = diagnose_environment(home=home, runner=runner)
+            self.assertEqual(report["next_action"], "install_evozeus")
             self.assertEqual(report["evozeus_home"]["exists"], False)
+            self.assertEqual(report["evozeus_home"]["required_action"], "install_evozeus")
             self.assertEqual(report["dependencies"]["git"], "ok")
             self.assertEqual(report["dependencies"]["gh"], "ok")
             self.assertEqual(report["dependencies"]["gh_auth"], "failed")
@@ -130,6 +185,8 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
 
             self.assertEqual(report["stage"], "target_skill_diagnosis")
             self.assertEqual(report["skill"]["name"], "resume-screening")
+            self.assertEqual(report["skill"]["target_kind"], "single_skill")
+            self.assertEqual(report["skill"]["root_entry"], "SKILL.md")
             self.assertEqual(report["skill"]["has_skill_md"], True)
             self.assertEqual(report["repo"]["name"], "MetaInFLow/resume-screening")
             self.assertEqual(report["repo"]["exists_on_github"], True)
@@ -200,6 +257,123 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             self.assertEqual(report["version"]["status"], "github_release_missing_create_from_changelog")
             self.assertEqual(report["version"]["current_tag"], "v0.3.0")
             self.assertFalse(report["version"]["requires_owner_choice"])
+
+    def test_detect_target_architecture_recognizes_agents_root_runtime_skill_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "sales-office-runtime-kit"
+            target.mkdir()
+            (target / "AGENTS.md").write_text("# Runtime Instructions\n", encoding="utf-8")
+            for dirname in ["runtime", "agents", "automation", "skills"]:
+                (target / dirname).mkdir()
+            for skill_name in ["sales-coach", "sales-crm-sync"]:
+                skill_dir = target / "skills" / skill_name
+                skill_dir.mkdir()
+                (skill_dir / "SKILL.md").write_text(
+                    f'---\nname: "{skill_name}"\n---\n# {skill_name}\n',
+                    encoding="utf-8",
+                )
+
+            architecture = detect_target_architecture(target)
+
+            self.assertEqual(architecture["target_kind"], "runtime_skill_bundle")
+            self.assertEqual(architecture["root_entry"], "AGENTS.md")
+            self.assertEqual(architecture["skill_inventory"]["count"], 2)
+            self.assertEqual(architecture["architecture_style"], "managed_runtime_skill_bundle")
+            self.assertEqual(architecture["evolution_surface"]["status"], "needs_skill_diagnosis")
+            self.assertIsNone(architecture["evolution_surface"]["instruction_placement"])
+            self.assertIn(
+                "AGENTS.md",
+                [candidate["path"] for candidate in architecture["evolution_surface"]["candidates"]],
+            )
+
+    def test_detect_target_architecture_recognizes_hook_loaded_control_skill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "hooked-skill-system"
+            target.mkdir()
+            (target / ".codex-plugin").mkdir()
+            (target / ".codex-plugin" / "plugin.json").write_text(
+                '{"skills":"./skills/","hooks":"./hooks/hooks-codex.json"}',
+                encoding="utf-8",
+            )
+            (target / "hooks").mkdir()
+            (target / "hooks" / "hooks-codex.json").write_text(
+                '{"hooks":{"session-start":"skills/session-bootstrap/SKILL.md"}}',
+                encoding="utf-8",
+            )
+            (target / "hooks" / "session-start-codex").write_text(
+                "#!/usr/bin/env bash\n# Load skills/session-bootstrap/SKILL.md at session start.\n",
+                encoding="utf-8",
+            )
+            skill_dir = target / "skills" / "session-bootstrap"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                '---\nname: "session-bootstrap"\n---\n# Session Bootstrap\nUse at session start to load skills and route skill usage.\n',
+                encoding="utf-8",
+            )
+
+            architecture = detect_target_architecture(target)
+
+            self.assertEqual(architecture["target_kind"], "hooked_skill_bundle")
+            self.assertEqual(architecture["architecture_style"], "plugin_hook_controlled_skill_system")
+            self.assertEqual(architecture["evolution_surface"]["status"], "needs_skill_diagnosis")
+            self.assertIsNone(architecture["evolution_surface"]["instruction_placement"])
+            self.assertIn(
+                "skills/session-bootstrap/SKILL.md",
+                [candidate["path"] for candidate in architecture["evolution_surface"]["candidates"]],
+            )
+            self.assertIn("hooks/hooks-codex.json", architecture["evolution_surface"]["controller_files"])
+            self.assertIn(".codex-plugin/plugin.json", architecture["plugin_manifests"])
+            self.assertIn(
+                "evolution surface diagnosis result",
+                architecture["component_gaps"]["missing_concepts"],
+            )
+
+    def test_diagnose_skill_accepts_agents_root_runtime_skill_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            target = Path(tmp) / "sales-office-runtime-kit"
+            target.mkdir()
+            (target / "AGENTS.md").write_text("# Sales Office Runtime Instructions\n", encoding="utf-8")
+            for dirname in ["runtime", "agents", "automation", "skills"]:
+                (target / dirname).mkdir()
+            skill_dir = target / "skills" / "sales-coach"
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_text('---\nname: "sales-coach"\n---\n', encoding="utf-8")
+
+            def runner(args, cwd=None):
+                if args[:3] == ["gh", "repo", "view"]:
+                    return {
+                        "returncode": 0,
+                        "stdout": (
+                            '{"nameWithOwner":"MetaInFLow/sales-office-runtime-kit",'
+                            '"url":"https://github.com/MetaInFLow/sales-office-runtime-kit",'
+                            '"visibility":"PRIVATE","viewerPermission":"WRITE",'
+                            '"defaultBranchRef":{"name":"main"}}'
+                        ),
+                        "stderr": "",
+                    }
+                if args[:3] == ["gh", "release", "view"]:
+                    return {"returncode": 1, "stdout": "", "stderr": "release not found"}
+                return {"returncode": 1, "stdout": "", "stderr": ""}
+
+            report = diagnose_skill(
+                target=target,
+                repo="MetaInFLow/sales-office-runtime-kit",
+                skill_name=None,
+                home=home,
+                runner=runner,
+            )
+
+            self.assertEqual(report["skill"]["target_kind"], "runtime_skill_bundle")
+            self.assertEqual(report["skill"]["root_entry"], "AGENTS.md")
+            self.assertFalse(report["skill"]["has_skill_md"])
+            self.assertIsNone(report["skill"]["evolution_surface"]["instruction_placement"])
+            self.assertEqual(report["skill"]["skill_inventory"]["count"], 1)
+            self.assertEqual(report["repo"]["access"]["viewer_permission"], "WRITE")
+            self.assertTrue(report["repo"]["access"]["can_write"])
+            self.assertEqual(report["publication"]["visibility"], "PRIVATE")
+            self.assertEqual(report["version"]["status"], "missing_version_requires_owner_choice")
 
 
 class WrapperManifestTest(unittest.TestCase):
@@ -488,6 +662,63 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
                 plan["migration"]["doc_path"],
                 "docs/wrapper-migrations/2026-06-27-unknown-to-v0.2.0.md",
             )
+
+    def test_plan_harness_upgrade_uses_agents_root_entry_for_runtime_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "kit"
+            target.mkdir()
+            (target / "AGENTS.md").write_text("# Runtime\n", encoding="utf-8")
+            (target / "skills").mkdir()
+            skill_dir = target / "skills" / "sales-coach"
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_text('---\nname: "sales-coach"\n---\n', encoding="utf-8")
+
+            plan = plan_harness_upgrade(
+                target=target,
+                latest_version="v0.2.0",
+                today=date(2026, 6, 27),
+            )
+
+            self.assertIn(
+                "AGENTS.md EvoZeus-wrapper status check section (instruction surface prelude)",
+                plan["planned_files"],
+            )
+            self.assertIn("AGENTS.md", plan["evolution_surface_policy"])
+            self.assertNotIn("SKILL.md EvoZeus-wrapper status check section (front matter prelude)", plan["planned_files"])
+
+    def test_plan_harness_upgrade_uses_hook_loaded_control_skill_for_plugin_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "hooked-skill-system"
+            target.mkdir()
+            (target / ".codex-plugin").mkdir()
+            (target / ".codex-plugin" / "plugin.json").write_text(
+                '{"skills":"./skills/","hooks":"./hooks/hooks-codex.json"}',
+                encoding="utf-8",
+            )
+            (target / "hooks").mkdir()
+            (target / "hooks" / "hooks-codex.json").write_text(
+                '{"hooks":{"session-start":"skills/session-bootstrap/SKILL.md"}}',
+                encoding="utf-8",
+            )
+            skill_dir = target / "skills" / "session-bootstrap"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                '---\nname: "session-bootstrap"\n---\n# Session Bootstrap\nUse at session start to load skills and route skill usage.\n',
+                encoding="utf-8",
+            )
+
+            plan = plan_harness_upgrade(
+                target=target,
+                latest_version="v0.2.0",
+                today=date(2026, 6, 27),
+                instruction_surface="skills/session-bootstrap/SKILL.md",
+            )
+
+            self.assertIn(
+                "skills/session-bootstrap/SKILL.md EvoZeus-wrapper status check section (instruction surface prelude)",
+                plan["planned_files"],
+            )
+            self.assertIn("skills/session-bootstrap/SKILL.md", plan["evolution_surface_policy"])
 
 
 if __name__ == "__main__":

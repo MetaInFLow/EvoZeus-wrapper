@@ -11,7 +11,6 @@ from pathlib import Path
 
 
 REQUIRED_FILES = [
-    "SKILL.md",
     "CHANGELOG.md",
     "WRAPPER.md",
     ".evozeus/wrapper.json",
@@ -267,10 +266,41 @@ def content_after_frontmatter(text: str) -> str:
     return text[end + len("\n---\n") :]
 
 
-def check_status_prelude(skill_text: str) -> None:
+def check_status_prelude(skill_text: str, label: str = "SKILL.md") -> None:
     content = content_after_frontmatter(skill_text).lstrip()
     if not content.startswith("## EvoZeus-wrapper 状态检查"):
-        fail("SKILL.md must start with the EvoZeus-wrapper status check after frontmatter")
+        fail(f"{label} must start with the EvoZeus-wrapper status check after frontmatter")
+
+
+def root_entry_path(target: Path) -> Path:
+    manifest = load_wrapper_manifest(target)
+    if manifest and manifest.get("instruction_surface"):
+        manifest_surface = target / manifest["instruction_surface"]
+        if manifest_surface.exists():
+            return manifest_surface
+        fail(f"manifest instruction_surface is missing: {manifest['instruction_surface']}")
+    skill = target / "SKILL.md"
+    if skill.exists():
+        return skill
+    agents = target / "AGENTS.md"
+    if agents.exists():
+        return agents
+    fail(
+        "target must contain a detectable evolution instruction surface: "
+        "root SKILL.md, root AGENTS.md, or .evozeus/wrapper.json instruction_surface selected by diagnosis"
+    )
+
+
+def check_agents_status_prelude(agents_text: str) -> None:
+    content = content_after_frontmatter(agents_text).lstrip()
+    if content.startswith("## EvoZeus-wrapper 状态检查"):
+        return
+    lines = content.splitlines()
+    if lines and lines[0].startswith("# "):
+        rest = "\n".join(lines[1:]).lstrip()
+        if rest.startswith("## EvoZeus-wrapper 状态检查"):
+            return
+    fail("AGENTS.md must put the EvoZeus-wrapper status check before the main runtime instructions")
 
 
 def check_doctor(args: argparse.Namespace) -> None:
@@ -397,9 +427,14 @@ def check_structure(args: argparse.Namespace) -> None:
     missing = [path for path in REQUIRED_FILES if not (target / path).exists()]
     if missing:
         fail("missing required wrapper files:\n" + "\n".join(f"- {path}" for path in missing))
-    skill_text = read_text(target / "SKILL.md")
-    check_terms(skill_text, SKILL_EVOLUTION_TERMS, "SKILL.md self-evolution method")
-    check_status_prelude(skill_text)
+    entry = root_entry_path(target)
+    entry_text = read_text(entry)
+    label = str(entry.relative_to(target))
+    check_terms(entry_text, SKILL_EVOLUTION_TERMS, f"{label} self-evolution method")
+    if label == "AGENTS.md":
+        check_agents_status_prelude(entry_text)
+    else:
+        check_status_prelude(entry_text, label)
     ok("structure contains required wrapper files")
 
 

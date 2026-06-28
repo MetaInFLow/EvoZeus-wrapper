@@ -5,7 +5,7 @@ description: Use when bootstrapping, adopting, repairing, or verifying a target 
 
 # Target Skill Transform
 
-Use this stage only after target Skill diagnosis has identified the canonical repo and harness state.
+Use this stage only after target Skill diagnosis has identified the canonical repo, target architecture, GitHub permission, evolution surface facts, component gaps, and harness state; `skills/evolution-surface-diagnosis/SKILL.md` has selected the instruction surface; and `skills/status-assessment/SKILL.md` has explained the result and cleared blockers.
 
 ## Modes
 
@@ -21,6 +21,7 @@ python3 scripts/evozeus_wrapper.py skill transform \
   --mode bootstrap \
   --target /absolute/path/to/skill \
   --repo OWNER/REPO \
+  --instruction-surface <relative path> \
   --visibility private \
   --dry-run \
   --json
@@ -31,8 +32,11 @@ python3 scripts/evozeus_wrapper.py skill transform --mode verify --target /absol
 ## Rules
 
 - Do not change target Skill business rules.
-- `SKILL.md` must put `EvoZeus-wrapper 状态检查` immediately after frontmatter so version/source checks run before the main chain.
-- Other `SKILL.md` changes are append-only: add the self-evolution method and `EvoZeus-wrapper` section if missing.
+- Single Skill targets use root `SKILL.md`; `SKILL.md` must put `EvoZeus-wrapper 状态检查` immediately after frontmatter so version/source checks run before the main chain.
+- Runtime kit targets often use root `AGENTS.md`; `AGENTS.md` must put `EvoZeus-wrapper 状态检查` before the main runtime instructions.
+- Hook/plugin-controlled Skill bundles use the instruction surface selected by `skills/evolution-surface-diagnosis/SKILL.md`, for example `skills/<control-skill>/SKILL.md`.
+- Do not create a fake root `SKILL.md`.
+- Other instruction-surface changes are append-only: add the self-evolution method and `EvoZeus-wrapper` section if missing.
 - Add `docs/wrapper-migrations/README.md` so future wrapper harness upgrades have a migration ledger.
 - Do not overwrite existing files without explicit user confirmation.
 - Keep `.evozeus/wrapper.json` as the harness manifest.

@@ -19,7 +19,7 @@ EVOLUTION_SECTION_HEADING = "## 自进化方法"
 WRAPPER_SECTION_HEADING = "## EvoZeus-wrapper"
 LOCAL_PROJECTS_DIR = Path.home() / ".evozeus" / ".projects"
 INITIAL_VERSION = "v0.1.0"
-WRAPPER_VERSION = "v0.3.0"
+WRAPPER_VERSION = "v0.4.0"
 
 
 def fail(message: str) -> None:

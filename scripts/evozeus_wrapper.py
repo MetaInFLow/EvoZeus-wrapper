@@ -8,6 +8,7 @@ from pathlib import Path
 
 from evozeus_wrapper_lifecycle import (
     REQUIRED_WRAPPER_FILES,
+    detect_target_architecture,
     diagnose_environment,
     diagnose_skill,
     plan_reinstall,
@@ -48,6 +49,10 @@ def main() -> int:
     skill_transform.add_argument("--target", required=True, help="Path to target Skill folder.")
     skill_transform.add_argument("--repo", help="GitHub repo in OWNER/REPO format.")
     skill_transform.add_argument("--visibility", choices=["public", "private"], help="Target repo visibility.")
+    skill_transform.add_argument(
+        "--instruction-surface",
+        help="Instruction surface selected by skills/evolution-surface-diagnosis/SKILL.md.",
+    )
     skill_transform.add_argument("--dry-run", action="store_true", help="Print planned transform without writing.")
     skill_transform.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
 
@@ -75,7 +80,7 @@ def main() -> int:
     harness_sub = harness.add_subparsers(dest="command", required=True)
     upgrade_check = harness_sub.add_parser("upgrade-check", help="Check target wrapper harness version.")
     upgrade_check.add_argument("--target", required=True)
-    upgrade_check.add_argument("--latest-version", help="Latest wrapper version, such as v0.3.0.")
+    upgrade_check.add_argument("--latest-version", help="Latest wrapper version, such as v0.4.0.")
     upgrade_check.add_argument("--managed-dirty", action="store_true")
     upgrade_check.add_argument("--json", action="store_true")
     upgrade = harness_sub.add_parser("upgrade", help="Plan wrapper harness upgrade.")
@@ -127,12 +132,19 @@ def main() -> int:
         if not args.dry_run:
             print("write operations are only implemented through dry-run planning for this mode", file=sys.stderr)
             return 1
+        architecture = detect_target_architecture(target)
+        instruction_surface = args.instruction_surface or architecture["root_entry"]
+        requires_surface_diagnosis = not args.instruction_surface and architecture["target_kind"] == "hooked_skill_bundle"
+        surface_planned_files = []
+        if instruction_surface:
+            surface_planned_files = [
+                f"{instruction_surface} EvoZeus-wrapper status check section",
+                f"{instruction_surface} self-evolution section",
+                f"{instruction_surface} EvoZeus-wrapper section",
+            ]
         planned_files = REQUIRED_WRAPPER_FILES + [
             ".evozeus/wrapper.json",
-            "SKILL.md EvoZeus-wrapper status check section",
-            "SKILL.md self-evolution section",
-            "SKILL.md EvoZeus-wrapper section",
-        ]
+        ] + surface_planned_files
         report = {
             "stage": "target_skill_transform",
             "mode": args.mode,
@@ -140,6 +152,11 @@ def main() -> int:
             "repo": args.repo,
             "visibility": args.visibility,
             "writes": False,
+            "target_kind": architecture["target_kind"],
+            "requires_surface_diagnosis": requires_surface_diagnosis,
+            "instruction_surface": instruction_surface,
+            "instruction_surface_source": "diagnosis_skill" if args.instruction_surface else "root_entry_fallback",
+            "evolution_surface": architecture["evolution_surface"],
             "planned_files": planned_files,
             "version_rule": (
                 "bootstrap uses v0.1.0 as the first Skill release; adopt/repair must preserve the existing "

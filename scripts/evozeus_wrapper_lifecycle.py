@@ -53,6 +53,44 @@ VERSION_HEADER_RE = re.compile(r"^##\s+\[?(v\d+\.\d+\.\d+)\]?\b", re.MULTILINE)
 SKILL_STATUS_SECTION = "SKILL.md EvoZeus-wrapper status check section (front matter prelude)"
 SKILL_WRAPPER_SECTION = "SKILL.md EvoZeus-wrapper section or migration note (append only)"
 WRAPPER_MIGRATION_README = "docs/wrapper-migrations/README.md"
+CONTROL_SKILL_NAME_TOKENS = (
+    "bootstrap",
+    "control",
+    "controller",
+    "entry",
+    "index",
+    "init",
+    "loader",
+    "loading",
+    "orchestrator",
+    "router",
+    "routing",
+    "runtime",
+    "session",
+    "start",
+    "startup",
+)
+CONTROL_SKILL_TEXT_TERMS = (
+    "available skills",
+    "bootstrap",
+    "control",
+    "hook",
+    "invoke",
+    "load skills",
+    "loaded by",
+    "plugin",
+    "route",
+    "routing",
+    "session start",
+    "session-start",
+    "skill usage",
+    "startup",
+    "启动",
+    "入口",
+    "加载",
+    "路由",
+    "控制",
+)
 
 
 def stage_label(stage: str) -> str:
@@ -267,11 +305,13 @@ def diagnose_environment(home: Path = Path.home(), runner=run_command) -> dict[s
 
     return {
         "stage": "environment_diagnosis",
+        "next_action": "continue_to_target_repo_diagnosis" if evozeus_home.exists() else "install_evozeus",
         "evozeus_home": {
             "exists": evozeus_home.exists(),
             "path": str(evozeus_home),
             "runtime_exists": runtime_dir.exists(),
             "projects_exists": projects_dir.exists(),
+            "required_action": "none" if evozeus_home.exists() else "install_evozeus",
         },
         "mother_repo": {
             "remote": "MetaInFLow/EvoZeus",
@@ -353,11 +393,49 @@ def diagnose_harness_state(target: Path) -> dict[str, Any]:
 def diagnose_repo_state(target: Path, repo: str | None, home: Path, workspace_roots: list[Path], runner=run_command) -> dict[str, Any]:
     exists_on_github: bool | None = None
     latest_release: dict[str, Any] | None = None
+    repo_info: dict[str, Any] = {}
+    access: dict[str, Any] = {
+        "checked": bool(repo),
+        "status": "not_requested" if not repo else "unknown",
+        "viewer_permission": None,
+        "can_read": False,
+        "can_write": False,
+        "can_admin": False,
+    }
     if repo:
-        view = runner(["gh", "repo", "view", repo, "--json", "nameWithOwner,url,visibility"])
+        view = runner(
+            [
+                "gh",
+                "repo",
+                "view",
+                repo,
+                "--json",
+                "nameWithOwner,url,visibility,viewerPermission,defaultBranchRef",
+            ]
+        )
         exists_on_github = view["returncode"] == 0
         if exists_on_github:
+            repo_info = parse_repo_view(view.get("stdout") or "")
+            permission = repo_info.get("viewerPermission")
+            access = {
+                "checked": True,
+                "status": "ok",
+                "viewer_permission": permission,
+                "can_read": True,
+                "can_write": permission in {"ADMIN", "MAINTAIN", "WRITE"},
+                "can_admin": permission == "ADMIN",
+            }
             latest_release = read_latest_release(repo, runner)
+        else:
+            access = {
+                "checked": True,
+                "status": "failed",
+                "viewer_permission": None,
+                "can_read": False,
+                "can_write": False,
+                "can_admin": False,
+                "error": (view.get("stderr") or view.get("stdout") or "").strip() or "repo access check failed",
+            }
 
     git_root = None
     git_root_result = runner(["git", "-C", str(target), "rev-parse", "--show-toplevel"])
@@ -382,11 +460,335 @@ def diagnose_repo_state(target: Path, repo: str | None, home: Path, workspace_ro
     return {
         "name": repo,
         "exists_on_github": exists_on_github,
+        "info": repo_info,
+        "visibility": repo_info.get("visibility"),
+        "default_branch": (repo_info.get("defaultBranchRef") or {}).get("name"),
+        "access": access,
         "latest_release": latest_release,
         "candidates": unique_candidates,
         "canonical_path": unique_candidates[0] if len(unique_candidates) == 1 else None,
         "needs_user_choice": len(unique_candidates) > 1,
         "projects_pointer": str(pointer) if pointer else None,
+    }
+
+
+def parse_repo_view(stdout: str) -> dict[str, Any]:
+    if not stdout.strip():
+        return {}
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def skill_entries(target: Path) -> list[dict[str, Any]]:
+    skills_dir = target / "skills"
+    if not skills_dir.exists():
+        return []
+    entries = []
+    for path in sorted(skills_dir.glob("*/SKILL.md")):
+        entries.append(
+            {
+                "path": str(path.relative_to(target)),
+                "directory": str(path.parent.relative_to(target)),
+                "name": skill_name_from_skill_md(path) or path.parent.name,
+            }
+        )
+    return entries
+
+
+def existing_relative_files(target: Path, paths: list[str]) -> list[str]:
+    return [path for path in paths if (target / path).is_file()]
+
+
+def plugin_manifest_files(target: Path) -> list[str]:
+    candidates = [
+        ".codex-plugin/plugin.json",
+        ".claude-plugin/plugin.json",
+        ".cursor-plugin/plugin.json",
+        ".kimi-plugin/plugin.json",
+        ".opencode/INSTALL.md",
+        "gemini-extension.json",
+        "package.json",
+    ]
+    return existing_relative_files(target, candidates)
+
+
+def hook_files(target: Path) -> list[str]:
+    hooks_dir = target / "hooks"
+    if not hooks_dir.is_dir():
+        return []
+    return [
+        str(path.relative_to(target))
+        for path in sorted(hooks_dir.iterdir())
+        if path.is_file()
+    ]
+
+
+def normalize_match_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text.lower())
+
+
+def read_text_if_small(path: Path, limit: int = 200_000) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        if path.stat().st_size > limit:
+            return ""
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def controller_corpus(target: Path, controllers: list[str]) -> str:
+    parts: list[str] = []
+    for controller in controllers:
+        path = target / controller
+        parts.append(controller)
+        parts.append(read_text_if_small(path, limit=80_000))
+    return normalize_match_text("\n".join(parts))
+
+
+def skill_entry_identifiers(entry: dict[str, Any]) -> list[str]:
+    values = [
+        entry.get("path", ""),
+        entry.get("directory", ""),
+        Path(entry.get("directory", "")).name,
+        entry.get("name", ""),
+    ]
+    identifiers = []
+    for value in values:
+        item = str(value).strip().strip('"').strip("'").lower()
+        if len(item) >= 3 and item not in identifiers:
+            identifiers.append(item)
+    return identifiers
+
+
+def hook_loaded_skill_candidate_facts(
+    target: Path,
+    skill_inventory: list[dict[str, Any]],
+    hooks: list[str],
+    plugins: list[str],
+) -> list[dict[str, Any]]:
+    controllers = hooks + plugins
+    if not controllers:
+        return []
+
+    corpus = controller_corpus(target, controllers)
+    candidates: list[dict[str, Any]] = []
+    for entry in skill_inventory:
+        skill_path = entry["path"]
+        full_path = target / skill_path
+        skill_text = normalize_match_text(read_text_if_small(full_path, limit=80_000))
+        name_basis = normalize_match_text(
+            f"{entry.get('name', '')} {entry.get('directory', '')} {entry.get('path', '')}"
+        )
+        referenced_identifiers = [
+            identifier
+            for identifier in skill_entry_identifiers(entry)
+            if identifier in corpus
+        ]
+        name_hints = [token for token in CONTROL_SKILL_NAME_TOKENS if token in name_basis]
+        text_hints = [term for term in CONTROL_SKILL_TEXT_TERMS if term in skill_text]
+        is_only_skill = len(skill_inventory) == 1
+
+        if not (referenced_identifiers or name_hints or text_hints or is_only_skill):
+            continue
+        candidates.append(
+            {
+                "path": skill_path,
+                "role": "hook_loaded_skill_instruction",
+                "reason": "script-surfaced hook/plugin candidate; final placement requires diagnosis Skill review",
+                "evidence": {
+                    "controller_referenced_identifiers": referenced_identifiers,
+                    "name_or_path_hints": name_hints,
+                    "instruction_text_hints": text_hints,
+                    "only_skill_in_bundle": is_only_skill,
+                },
+                "controlled_by": controllers,
+                "has_wrapper_status_check": surface_has_status_check(full_path),
+            }
+        )
+
+    return sorted(candidates, key=lambda item: item["path"])
+
+
+def surface_has_status_check(path: Path) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8")
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            text = text[end + len("\n---\n") :]
+    stripped = text.lstrip()
+    if stripped.startswith("## EvoZeus-wrapper 状态检查"):
+        return True
+    lines = stripped.splitlines()
+    if lines and lines[0].startswith("# "):
+        return "\n".join(lines[1:]).lstrip().startswith("## EvoZeus-wrapper 状态检查")
+    return False
+
+
+def collect_evolution_surface_facts(target: Path, skill_inventory: list[dict[str, Any]]) -> dict[str, Any]:
+    plugins = plugin_manifest_files(target)
+    hooks = hook_files(target)
+    candidates: list[dict[str, Any]] = []
+
+    def add_candidate(path: str, role: str, reason: str, controlled_by: list[str] | None = None) -> None:
+        full_path = target / path
+        if not full_path.is_file():
+            return
+        candidates.append(
+            {
+                "path": path,
+                "role": role,
+                "reason": reason,
+                "controlled_by": controlled_by or [],
+                "has_wrapper_status_check": surface_has_status_check(full_path),
+            }
+        )
+
+    add_candidate(
+        "SKILL.md",
+        "root_skill_instruction",
+        "root SKILL.md is the direct Skill instruction surface",
+    )
+    add_candidate(
+        "AGENTS.md",
+        "root_agent_instruction",
+        "root AGENTS.md controls repository-level agent behavior",
+    )
+    candidates.extend(hook_loaded_skill_candidate_facts(target, skill_inventory, hooks, plugins))
+
+    if not candidates and len(skill_inventory) == 1:
+        add_candidate(
+            skill_inventory[0]["path"],
+            "only_skill_instruction",
+            "single discovered skills/*/SKILL.md is the only available Skill instruction surface",
+        )
+
+    return {
+        "status": "needs_skill_diagnosis" if candidates else "needs_owner_choice",
+        "selected": None,
+        "candidates": candidates,
+        "instruction_placement": None,
+        "controller_files": hooks + plugins,
+        "diagnosis_skill": "skills/evolution-surface-diagnosis/SKILL.md",
+        "selection_rule": (
+            "scripts collect facts and candidate instruction surfaces only; "
+            "the evolution-surface diagnosis Skill must browse the whole repo and decide the controlling surface"
+        ),
+        "script_fact_boundary": (
+            "do not treat candidates as final placement; use them as evidence for the diagnosis Skill"
+        ),
+    }
+
+
+def assess_component_gaps(target: Path, evolution_surface: dict[str, Any]) -> dict[str, Any]:
+    required = REQUIRED_WRAPPER_FILES + [".evozeus/wrapper.json"]
+    missing_files = [rel for rel in required if not (target / rel).exists()]
+    present_files = [rel for rel in required if (target / rel).exists()]
+    missing_concepts = []
+    selected = evolution_surface.get("selected")
+    if not selected:
+        missing_concepts.append("evolution surface diagnosis result")
+    elif not selected.get("has_wrapper_status_check"):
+        missing_concepts.append(f"{selected['path']} EvoZeus-wrapper status check")
+    if not (target / "CHANGELOG.md").exists():
+        missing_concepts.append("Skill or kit release changelog")
+    if not (target / ".evozeus" / "wrapper.json").exists():
+        missing_concepts.append("wrapper manifest")
+
+    return {
+        "present_files": present_files,
+        "missing_files": missing_files,
+        "missing_concepts": missing_concepts,
+    }
+
+
+def detect_target_architecture(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    has_root_skill = (target / "SKILL.md").exists()
+    has_agents = (target / "AGENTS.md").exists()
+    entries = skill_entries(target)
+    plugins = plugin_manifest_files(target)
+    hooks = hook_files(target)
+    dir_names = [
+        "runtime",
+        "agents",
+        "skills",
+        "automation",
+        "cases",
+        "knowledge",
+        "templates",
+        "state",
+        "config",
+    ]
+    present_dirs = [name for name in dir_names if (target / name).is_dir()]
+    file_names = [
+        "AGENTS.md",
+        "SKILL.md",
+        "ARCHITECTURE.md",
+        "MAINTENANCE.md",
+        "README.md",
+        "ONLINE-DOCS.md",
+        "CLAUDE.md",
+        "OPENCLAW.md",
+        "HERMES.md",
+    ]
+    present_files = [name for name in file_names if (target / name).is_file()]
+    evolution_surface = collect_evolution_surface_facts(target, entries)
+
+    if hooks and plugins and entries:
+        target_kind = "hooked_skill_bundle"
+    elif has_root_skill and not entries:
+        target_kind = "single_skill"
+    elif has_agents and entries and {"runtime", "agents", "automation"}.issubset(set(present_dirs)):
+        target_kind = "runtime_skill_bundle"
+    elif entries:
+        target_kind = "skill_bundle"
+    elif has_agents:
+        target_kind = "agents_runtime"
+    else:
+        target_kind = "unknown"
+
+    if target_kind == "hooked_skill_bundle":
+        architecture_style = "plugin_hook_controlled_skill_system"
+    elif target_kind == "runtime_skill_bundle":
+        architecture_style = "managed_runtime_skill_bundle"
+    elif target_kind == "skill_bundle":
+        architecture_style = "multi_skill_bundle"
+    elif target_kind == "single_skill":
+        architecture_style = "single_skill_repo"
+    elif target_kind == "agents_runtime":
+        architecture_style = "agent_runtime"
+    else:
+        architecture_style = "unknown"
+
+    root_entry = "SKILL.md" if has_root_skill else "AGENTS.md" if has_agents else None
+    verification_candidates = [
+        str(path.relative_to(target))
+        for path in sorted((target / "automation").glob("*.py"))
+    ] if (target / "automation").is_dir() else []
+    component_gaps = assess_component_gaps(target, evolution_surface)
+
+    return {
+        "target_kind": target_kind,
+        "architecture_style": architecture_style,
+        "root_entry": root_entry,
+        "evolution_surface": evolution_surface,
+        "component_gaps": component_gaps,
+        "root_files": present_files,
+        "top_level_dirs": present_dirs,
+        "plugin_manifests": plugins,
+        "hook_files": hooks,
+        "skill_inventory": {
+            "count": len(entries),
+            "entries": entries,
+        },
+        "verification_candidates": verification_candidates,
     }
 
 
@@ -401,6 +803,7 @@ def diagnose_skill(
     home = home.expanduser().resolve()
     target = target.expanduser().resolve()
     skill_md = target / "SKILL.md"
+    architecture = detect_target_architecture(target)
     inferred_name = skill_name or skill_name_from_skill_md(skill_md) or target.name
 
     install_paths = [
@@ -417,27 +820,41 @@ def diagnose_skill(
     manifest_repo = manifest.get("canonical_repo") if manifest else None
     effective_repo = repo or manifest_repo
     repo_state = diagnose_repo_state(target, effective_repo, home, workspace_roots or [], runner)
+    version = diagnose_skill_version(target, repo_state["exists_on_github"], repo_state["latest_release"])
+    harness = diagnose_harness_state(target)
+    source_contract = diagnose_source_contract(
+        target=target,
+        requested_repo=repo,
+        skill_name=inferred_name,
+        home=home,
+        installs=installs,
+        runner=runner,
+    )
     return {
         "stage": "target_skill_diagnosis",
         "skill": {
             "name": inferred_name,
             "target_path": str(target),
             "has_skill_md": skill_md.exists(),
+            "root_entry": architecture["root_entry"],
+            "target_kind": architecture["target_kind"],
+            "architecture_style": architecture["architecture_style"],
+            "evolution_surface": architecture["evolution_surface"],
+            "component_gaps": architecture["component_gaps"],
+            "root_files": architecture["root_files"],
+            "top_level_dirs": architecture["top_level_dirs"],
+            "plugin_manifests": architecture["plugin_manifests"],
+            "hook_files": architecture["hook_files"],
+            "skill_inventory": architecture["skill_inventory"],
+            "verification_candidates": architecture["verification_candidates"],
         },
         "repo": repo_state,
-        "version": diagnose_skill_version(target, repo_state["exists_on_github"], repo_state["latest_release"]),
+        "version": version,
         "installs": installs,
-        "harness": diagnose_harness_state(target),
-        "source_contract": diagnose_source_contract(
-            target=target,
-            requested_repo=repo,
-            skill_name=inferred_name,
-            home=home,
-            installs=installs,
-            runner=runner,
-        ),
+        "harness": harness,
+        "source_contract": source_contract,
         "publication": {
-            "visibility": None,
+            "visibility": repo_state.get("visibility"),
             "sensitive_risk": "unknown",
         },
     }
@@ -559,8 +976,9 @@ def build_wrapper_manifest(
     wrapper_version: str,
     managed_files: list[str],
     install_links: list[str],
+    instruction_surface: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    manifest = {
         "wrapper_repo": WRAPPER_REPO,
         "wrapper_version": wrapper_version,
         "applied_at": date.today().isoformat(),
@@ -568,6 +986,9 @@ def build_wrapper_manifest(
         "managed_files": managed_files,
         "install_links": install_links,
     }
+    if instruction_surface:
+        manifest["instruction_surface"] = instruction_surface
+    return manifest
 
 
 def write_wrapper_manifest(target: Path, manifest: dict[str, Any], force: bool = False) -> str:
@@ -696,9 +1117,19 @@ def plan_harness_upgrade(
     latest_version: str | None = None,
     managed_dirty: bool = False,
     today: date | None = None,
+    instruction_surface: str | None = None,
 ) -> dict[str, Any]:
     target = target.expanduser().resolve()
     manifest = load_wrapper_manifest(target)
+    architecture = detect_target_architecture(target)
+    manifest_surface = manifest.get("instruction_surface") if manifest else None
+    instruction_surface = instruction_surface or manifest_surface or architecture["root_entry"] or "SKILL.md"
+    if instruction_surface == "SKILL.md":
+        root_status_section = SKILL_STATUS_SECTION
+        root_wrapper_section = SKILL_WRAPPER_SECTION
+    else:
+        root_status_section = f"{instruction_surface} EvoZeus-wrapper status check section (instruction surface prelude)"
+        root_wrapper_section = f"{instruction_surface} EvoZeus-wrapper section or migration note (append only)"
     current = manifest.get("wrapper_version") if manifest else None
     latest = latest_version or current
 
@@ -717,8 +1148,8 @@ def plan_harness_upgrade(
     if needs_upgrade or needs_repair:
         planned_files.extend(
             [
-                SKILL_STATUS_SECTION,
-                SKILL_WRAPPER_SECTION,
+                root_status_section,
+                root_wrapper_section,
                 ".evozeus/wrapper.json",
                 WRAPPER_MIGRATION_README,
             ]
@@ -771,9 +1202,12 @@ def plan_harness_upgrade(
         "requires_confirmation": status in {"missing_manifest", "latest_unknown", "needs_merge_review", "requires_confirmation"},
         "status_check_first": True,
         "append_only": True,
+        "evolution_surface_policy": (
+            f"add or refresh the wrapper-owned status prelude in {instruction_surface} before the main chain, then append "
+            "the EvoZeus-wrapper section or a migration note; never rewrite target business rules"
+        ),
         "skill_md_policy": (
-            "add or refresh the wrapper-owned status prelude before the main chain, then append the "
-            "EvoZeus-wrapper section or a migration note; never rewrite target Skill business rules"
+            "single Skill targets use SKILL.md; AGENTS.md-root targets use AGENTS.md; hook-controlled bundles use the hook-loaded control Skill"
         ),
         "migration": {
             "from_wrapper_version": current,
@@ -787,8 +1221,8 @@ def plan_harness_upgrade(
             "Read .evozeus/wrapper.json and confirm canonical_repo before touching runtime installs.",
             "Diff wrapper-managed files; if they contain local edits, stop for merge review.",
             "Copy or merge wrapper-managed files only.",
-            "Add the EvoZeus-wrapper status check immediately after SKILL.md frontmatter if missing.",
-            "Append the EvoZeus-wrapper section if missing; otherwise append a migration note instead of editing old text.",
+            f"Add the EvoZeus-wrapper status check in {instruction_surface} before the target main chain if missing.",
+            f"Append the EvoZeus-wrapper section in {instruction_surface} if missing; otherwise append a migration note instead of editing old text.",
             "Write a migration record under docs/wrapper-migrations/ with from/to wrapper versions, validation, and rollback.",
             "Update .evozeus/wrapper.json wrapper_version after validation passes.",
         ],
