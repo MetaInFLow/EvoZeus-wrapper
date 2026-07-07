@@ -27,6 +27,17 @@ environment diagnosis
 | Before | 本地 Skill 文件夹，至少包含 `SKILL.md` |
 | After | canonical GitHub repo、GitHub Pages、`.evozeus/wrapper.json`、`.evozeus/feedback-policy.json`、`.evozeus/audit-rule.md`、`CHANGELOG.md`、Issue template、PR template、design doc template、preflight checker、runtime symlink |
 
+## Install Artifact Contract
+
+EvoZeus-wrapper 是改造场；目标 Skill 是输入物。改造后必须区分两个输出物：
+
+- maintainer artifact：完整 wrapped Skill repo，用于自进化、审计、发布和 harness 迁移。
+- runtime artifact：可安装、可运行的最小 Skill bundle，用于普通用户执行目标 Skill 业务流程。
+
+维护治理资产不能自动成为普通安装用户的运行前提。`.evozeus/*`、GitHub release 检查、`gh`、project pointer 和 wrapper upgrade 命令只属于 maintainer artifact，除非当前安装模式明确是 symlink/repo clone 并保证这些文件存在。
+
+详细规则见 [`docs/specs/2026-07-07-install-artifact-contract.md`](specs/2026-07-07-install-artifact-contract.md)。后续修改 wrapper 注入逻辑、安装逻辑、status prelude、start hook 或 harness upgrade 时，必须先满足该契约。
+
 ## Single Source Contract
 
 同一个 Skill 在本地只允许一个 physical GitHub repo clone。
@@ -146,8 +157,8 @@ python3 scripts/evozeus_wrapper.py hook start-check --target /absolute/path/to/s
 python3 scripts/evozeus_wrapper.py loop lesson --dry-run --json
 python3 scripts/evozeus_wrapper.py loop audit --target /absolute/path/to/skill --user-input "..." --json
 python3 scripts/evozeus_wrapper.py loop issue-to-pr --dry-run --json
-python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --latest-version v0.4.0 --json
-python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.4.0 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --latest-version v0.5.0 --json
+python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.5.0 --dry-run --json
 ```
 
 写入、发布、替换安装副本、创建 Issue、创建 PR、启用 Pages 都必须在诊断报告之后进入用户确认。
@@ -156,15 +167,15 @@ python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/sk
 
 目标 Skill release 和 wrapper harness version 是两条版本轴。
 
-- Skill release 描述目标 Skill 行为版本。
+- Skill release 描述目标 Skill 可安装 artifact 版本；业务规则变化和 wrapper harness 迁移都可能触发 Skill patch release。
 - Wrapper harness version 描述 EvoZeus-wrapper 注入的模板、脚本和治理逻辑版本。
 - `.evozeus/wrapper.json` 必须记录 `wrapper_repo`、`wrapper_version`、`canonical_repo`、`managed_files` 和 `install_links`。
 - wrapper major upgrade 必须用户确认。
 - wrapper upgrade 只能改 harness-managed files，不改目标 Skill 业务规则。
-- wrapper upgrade 必须生成迁移方案，说明 from/to wrapper version、planned files、`SKILL.md` 状态检查动作、append-only 动作、验证命令和回滚方案。
-- 目标 `SKILL.md` 的 frontmatter 后必须先出现 `EvoZeus-wrapper 状态检查`，列出当前 Skill release、wrapper harness version、source contract 检查和对应解决方法；全部 OK 后才进入原 Skill 主链路。
+- wrapper upgrade 必须生成迁移方案，说明 from/to wrapper version、planned files、`SKILL.md` 状态检查动作、append-only 动作、Skill release patch bump、验证命令和回滚方案。
+- 目标 instruction surface 可包含 `EvoZeus-wrapper 状态检查`，但必须限定为 maintainer/canonical repo 会话中的修改、发布、迁移和 wrapper 维护动作；如果 `.evozeus/wrapper.json` 或 wrapper tooling 不存在，视为 runtime-only install，继续目标 Skill 业务流程。
 - 目标 `SKILL.md` 中的 `EvoZeus-wrapper` 区域只能追加或补缺；如果已经存在，升级时追加 migration note，不改写旧业务段落。
-- `docs/wrapper-migrations/` 是 wrapper harness 迁移账本；`CHANGELOG.md` 仍主要记录目标 Skill 行为 release，除非 wrapper 迁移同时改变了 Skill 行为。
+- `docs/wrapper-migrations/` 是 wrapper harness 迁移账本；`CHANGELOG.md` 必须记录对应的 Skill patch release entry。即使目标业务规则不变，只要 wrapper 迁移改变了可安装 Skill artifact，也要 bump 目标 Skill patch version。
 
 ## Case: GitHub-backed Skill already exists
 

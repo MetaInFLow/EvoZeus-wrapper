@@ -14,6 +14,8 @@ REQUIRED_FILES = [
     "CHANGELOG.md",
     "WRAPPER.md",
     ".evozeus/wrapper.json",
+    ".evozeus/feedback-policy.json",
+    ".evozeus/audit-rule.md",
     "docs/index.md",
     "docs/_config.yml",
     "docs/design-doc-template.md",
@@ -25,6 +27,7 @@ REQUIRED_FILES = [
     ".github/workflows/evozeus-wrapper-preflight.yml",
     "scripts/evozeus_wrapper_preflight.py",
 ]
+MAINTAINER_REQUIRED_FILES = REQUIRED_FILES
 
 ISSUE_TERMS = [
     ["不满意", "unsatisfactory", "bad result"],
@@ -46,10 +49,11 @@ DESIGN_TERMS = [
 SKILL_EVOLUTION_TERMS = [
     ["EvoZeus-wrapper 状态检查"],
     ["当前记录版本", "当前 Skill 版本", "Skill release"],
-    ["解决顺序", "解决方法"],
+    ["解决顺序", "处理顺序", "解决方法"],
     ["自进化"],
     ["EvoZeus-wrapper"],
     [".evozeus/wrapper.json"],
+    ["runtime-only install"],
     ["source discovery", "源头发现", "source of truth", "事实源"],
     ["~/.evozeus/.projects", ".evozeus/.projects"],
     ["version --repo"],
@@ -73,6 +77,21 @@ PLACEHOLDER_PATTERNS = [
 
 VERSION_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+RUNTIME_REFERENCE_RE = re.compile(
+    r"(?P<path>(?:references|scripts|assets|templates|agents)/[A-Za-z0-9_.@()/+=,~ -]+)",
+)
+WRAPPER_RUNTIME_SECTION_HEADINGS = {
+    "## EvoZeus-wrapper 状态检查",
+    "## 自进化方法",
+    "## EvoZeus-wrapper",
+}
+BLOCKING_STATUS_PHRASES = [
+    "Continue to the target Skill's main flow only after all three are OK.",
+    "全部 OK 后",
+    "只有检查结果为 OK",
+    "才继续进入目标 Skill 原本主链路",
+    "才继续进入下方原 Skill 流程",
+]
 
 
 def fail(message: str) -> None:
@@ -270,6 +289,7 @@ def check_status_prelude(skill_text: str, label: str = "SKILL.md") -> None:
     content = content_after_frontmatter(skill_text).lstrip()
     if not content.startswith("## EvoZeus-wrapper 状态检查"):
         fail(f"{label} must start with the EvoZeus-wrapper status check after frontmatter")
+    check_runtime_safe_status_prelude(skill_text, label)
 
 
 def root_entry_path(target: Path) -> Path:
@@ -294,13 +314,148 @@ def root_entry_path(target: Path) -> Path:
 def check_agents_status_prelude(agents_text: str) -> None:
     content = content_after_frontmatter(agents_text).lstrip()
     if content.startswith("## EvoZeus-wrapper 状态检查"):
+        check_runtime_safe_status_prelude(agents_text, "AGENTS.md")
         return
     lines = content.splitlines()
     if lines and lines[0].startswith("# "):
         rest = "\n".join(lines[1:]).lstrip()
         if rest.startswith("## EvoZeus-wrapper 状态检查"):
+            check_runtime_safe_status_prelude(agents_text, "AGENTS.md")
             return
     fail("AGENTS.md must put the EvoZeus-wrapper status check before the main runtime instructions")
+
+
+def normalize_relative_path(raw: str) -> str:
+    cleaned = raw.strip().strip("`'\"").strip()
+    cleaned = cleaned.rstrip(".,;:)")
+    return cleaned.replace("\\", "/")
+
+
+def referenced_runtime_files(text: str) -> list[str]:
+    files: list[str] = []
+    for match in RUNTIME_REFERENCE_RE.finditer(text):
+        rel = normalize_relative_path(match.group("path"))
+        if rel and rel not in files:
+            files.append(rel)
+    return files
+
+
+def strip_wrapper_runtime_sections(text: str) -> str:
+    kept: list[str] = []
+    skipping = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped in WRAPPER_RUNTIME_SECTION_HEADINGS:
+            skipping = True
+            continue
+        if skipping and re.match(r"^#{1,6}\s+", stripped) and stripped not in WRAPPER_RUNTIME_SECTION_HEADINGS:
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def add_tree_files(target: Path, dirname: str, files: list[str]) -> None:
+    root = target / dirname
+    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            rel = str(path.relative_to(target))
+            if rel not in files:
+                files.append(rel)
+
+
+def discover_runtime_bundle(target: Path) -> dict:
+    manifest = load_wrapper_manifest(target)
+    runtime_bundle = manifest.get("runtime_bundle") if manifest else None
+    if isinstance(runtime_bundle, dict):
+        instruction_surface = str(runtime_bundle.get("instruction_surface") or "SKILL.md")
+        required = [
+            normalize_relative_path(path)
+            for path in runtime_bundle.get("required_files", [])
+            if isinstance(path, str) and path.strip()
+        ]
+        if instruction_surface not in required:
+            required.insert(0, instruction_surface)
+        optional = [
+            normalize_relative_path(path)
+            for path in runtime_bundle.get("optional_files", [])
+            if isinstance(path, str) and path.strip()
+        ]
+        return {
+            "instruction_surface": instruction_surface,
+            "required_files": list(dict.fromkeys(required)),
+            "optional_files": list(dict.fromkeys(optional)),
+            "external_tools": runtime_bundle.get("external_tools", []),
+            "source": ".evozeus/wrapper.json runtime_bundle",
+        }
+
+    entry = root_entry_path(target)
+    instruction_surface = str(entry.relative_to(target))
+    required_files = [instruction_surface]
+    text = entry.read_text(encoding="utf-8", errors="ignore")
+    business_text = strip_wrapper_runtime_sections(text)
+    for rel in referenced_runtime_files(business_text):
+        if rel not in required_files:
+            required_files.append(rel)
+    for dirname in ["references", "assets", "templates"]:
+        if f"{dirname}/" in business_text:
+            add_tree_files(target, dirname, required_files)
+    if "scripts/" in business_text:
+        add_tree_files(target, "scripts", required_files)
+    for metadata in ["agents/openai.yaml"]:
+        if (target / metadata).is_file() and metadata not in required_files:
+            required_files.append(metadata)
+    return {
+        "instruction_surface": instruction_surface,
+        "required_files": required_files,
+        "optional_files": [],
+        "external_tools": [],
+        "source": "discovered_from_instruction_surface",
+    }
+
+
+def check_runtime_safe_status_prelude(text: str, label: str) -> None:
+    if "EvoZeus-wrapper 状态检查" not in text:
+        return
+    if "runtime-only install" not in text:
+        fail(f"{label} wrapper status prelude must include runtime-only install fallback language")
+    lowered = text.lower()
+    for phrase in BLOCKING_STATUS_PHRASES:
+        if phrase.lower() in lowered:
+            fail(
+                f"{label} wrapper status prelude contains blocking runtime language; "
+                f"remove it and keep the runtime-only install fallback: {phrase}"
+            )
+
+
+def check_runtime(args: argparse.Namespace) -> None:
+    target = Path(args.target).resolve()
+    bundle = discover_runtime_bundle(target)
+    missing = [path for path in bundle["required_files"] if not (target / path).is_file()]
+    if missing:
+        fail("missing required runtime files:\n" + "\n".join(f"- {path}" for path in missing))
+    entry = target / bundle["instruction_surface"]
+    check_runtime_safe_status_prelude(read_text(entry), bundle["instruction_surface"])
+    ok("runtime bundle is complete")
+
+
+def check_maintainer(args: argparse.Namespace) -> None:
+    target = Path(args.target).resolve()
+    missing = [path for path in MAINTAINER_REQUIRED_FILES if not (target / path).exists()]
+    if missing:
+        fail("missing required maintainer wrapper files:\n" + "\n".join(f"- {path}" for path in missing))
+    entry = root_entry_path(target)
+    entry_text = read_text(entry)
+    label = str(entry.relative_to(target))
+    check_terms(entry_text, SKILL_EVOLUTION_TERMS, f"{label} self-evolution method")
+    if label == "AGENTS.md":
+        check_agents_status_prelude(entry_text)
+    else:
+        check_status_prelude(entry_text, label)
+    check_runtime(args)
+    ok("maintainer bundle contains required wrapper files")
 
 
 def check_doctor(args: argparse.Namespace) -> None:
@@ -423,19 +578,7 @@ def check_wrapper_managed_doctor(
 
 
 def check_structure(args: argparse.Namespace) -> None:
-    target = Path(args.target).resolve()
-    missing = [path for path in REQUIRED_FILES if not (target / path).exists()]
-    if missing:
-        fail("missing required wrapper files:\n" + "\n".join(f"- {path}" for path in missing))
-    entry = root_entry_path(target)
-    entry_text = read_text(entry)
-    label = str(entry.relative_to(target))
-    check_terms(entry_text, SKILL_EVOLUTION_TERMS, f"{label} self-evolution method")
-    if label == "AGENTS.md":
-        check_agents_status_prelude(entry_text)
-    else:
-        check_status_prelude(entry_text, label)
-    ok("structure contains required wrapper files")
+    check_maintainer(args)
 
 
 def check_issue(args: argparse.Namespace) -> None:
@@ -586,6 +729,12 @@ def main() -> int:
     doctor.add_argument("--repo", help="GitHub repo in OWNER/REPO format. Defaults to origin remote or discovered candidate.")
     doctor.add_argument("--allow-missing-repo", action="store_true", help="Allow --repo to be absent on GitHub when bootstrapping a new repo.")
 
+    runtime = sub.add_parser("runtime", help="Check runtime-copy runnable Skill files.")
+    runtime.add_argument("--target", default=".", help="Target Skill runtime or wrapped repo path.")
+
+    maintainer = sub.add_parser("maintainer", help="Check maintainer wrapper governance files.")
+    maintainer.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
+
     structure = sub.add_parser("structure", help="Check required wrapper files.")
     structure.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
 
@@ -613,6 +762,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "doctor":
         check_doctor(args)
+    elif args.command == "runtime":
+        check_runtime(args)
+    elif args.command == "maintainer":
+        check_maintainer(args)
     elif args.command == "structure":
         check_structure(args)
     elif args.command == "issue":

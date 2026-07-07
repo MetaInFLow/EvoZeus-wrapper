@@ -8,7 +8,12 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from evozeus_wrapper_lifecycle import build_wrapper_manifest, write_wrapper_manifest, WRAPPER_MANAGED_FILES
+from evozeus_wrapper_lifecycle import (
+    WRAPPER_MANAGED_FILES,
+    build_wrapper_manifest,
+    discover_runtime_bundle,
+    write_wrapper_manifest,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +24,7 @@ EVOLUTION_SECTION_HEADING = "## 自进化方法"
 WRAPPER_SECTION_HEADING = "## EvoZeus-wrapper"
 LOCAL_PROJECTS_DIR = Path.home() / ".evozeus" / ".projects"
 INITIAL_VERSION = "v0.1.0"
-WRAPPER_VERSION = "v0.4.0"
+WRAPPER_VERSION = "v0.5.0"
 
 
 def fail(message: str) -> None:
@@ -166,10 +171,10 @@ def build_evolution_section(replacements: dict[str, str]) -> str:
 进化流程：
 
 1. 使用中出现不满意结果时，先提交 Skill Feedback Issue，写清不满意结果、期望结果、复现场景、证据边界和影响程度。
-2. 每次运行本 Skill 前，先执行 `python3 scripts/evozeus_wrapper_preflight.py doctor --repo {replacements["REPO_NAME"]}`，确认 wrapper source contract 成立。
+2. 每次维护、发布或迁移本 Skill 前，先执行 `python3 scripts/evozeus_wrapper_preflight.py doctor --repo {replacements["REPO_NAME"]}`，确认 wrapper source contract 成立。
 3. 再执行 `python3 scripts/evozeus_wrapper_preflight.py version --repo {replacements["REPO_NAME"]}`，确认 GitHub latest release 没有新版本。
 4. 开始修改前，在 `docs/designs/` 新建设计文档，明确 Related issue、优化目标、实现计划、验证计划和 release plan。
-5. PR 必须同步更新 `SKILL.md` 与 `CHANGELOG.md`，并通过 `python3 scripts/evozeus_wrapper_preflight.py structure` 和 PR 检查。
+5. PR 必须同步更新 `SKILL.md` 与 `CHANGELOG.md`，并通过 `python3 scripts/evozeus_wrapper_preflight.py runtime`、`python3 scripts/evozeus_wrapper_preflight.py maintainer` 和 PR 检查。
 6. 合并后用 `vMAJOR.MINOR.PATCH` release tag 和 release notes 固化本次进化，保留可回滚记录。
 
 边界：不要把 raw private session、客户资料、secret、未脱敏商业上下文写入公开 Issue、docs 或 release notes；`~/.evozeus/.projects/{replacements["REPO_NAME"]}/` 应指向 canonical repo，runtime install 不能作为 copied install 或第二事实源直接修改。
@@ -185,7 +190,11 @@ def build_status_section(replacements: dict[str, str]) -> str:
     return f"""\
 {STATUS_SECTION_HEADING}
 
-执行本 Skill 主链路前，先完成状态检查；只有检查结果为 OK，才继续进入下方原 Skill 流程。
+本段只约束 maintainer/canonical repo 会话中的修改、发布、迁移和 wrapper 维护动作。
+
+如果 `.evozeus/wrapper.json` 或 wrapper tooling 不存在，视为 runtime-only install，继续目标 Skill 业务流程；不要仅因 wrapper 治理文件缺失阻断普通运行。
+
+维护、发布或迁移前执行以下状态检查：
 
 1. Skill release 状态
    - 当前记录版本：`{replacements["CURRENT_VERSION"]}`
@@ -201,7 +210,7 @@ def build_status_section(replacements: dict[str, str]) -> str:
    - 检查命令：`python3 scripts/evozeus_wrapper_preflight.py doctor --repo {replacements["REPO_NAME"]}`
    - 如果 `.evozeus/.projects`、git origin 或 runtime install 不一致：先修复为同一个 canonical repo，再继续。
 
-解决顺序：先修 source contract，再修 wrapper harness，最后处理 Skill release。全部 OK 后，再进入主链路。
+解决顺序：维护动作先修 source contract，再修 wrapper harness，最后处理 Skill release；runtime-only install 不走此阻断，直接进入目标 Skill 业务流程。
 """
 
 
@@ -223,7 +232,8 @@ def build_wrapper_section(replacements: dict[str, str]) -> str:
 
 - 目标 Skill 行为问题：先提交 Skill Feedback Issue，不直接改 runtime install。
 - 源头/安装问题：先运行 `python3 scripts/evozeus_wrapper_preflight.py doctor --repo {replacements["REPO_NAME"]}`。
-- 结构问题：运行 `python3 scripts/evozeus_wrapper_preflight.py structure`。
+- runtime 结构问题：运行 `python3 scripts/evozeus_wrapper_preflight.py runtime`。
+- maintainer 结构问题：运行 `python3 scripts/evozeus_wrapper_preflight.py maintainer`。
 - Skill release 问题：运行 `python3 scripts/evozeus_wrapper_preflight.py version --repo {replacements["REPO_NAME"]}`。
 - wrapper harness 升级：回到 EvoZeus-wrapper repo，运行 `python3 scripts/evozeus_wrapper.py harness upgrade-check --target <this-skill-repo> --latest-version <wrapper-version> --json`，再用 `harness upgrade --dry-run` 生成迁移方案。
 
@@ -231,8 +241,8 @@ Append-only 迁移规则：
 
 - wrapper 升级必须保留 frontmatter 后的状态检查；其他 `SKILL.md` wrapper 内容只能追加本区缺失内容或 migration note，不要重写原 Skill 业务段落。
 - 如果本区已存在，升级时追加 migration note，不改写旧文本。
-- 每次 wrapper 升级必须记录 from/to wrapper version、planned files、验证命令、回滚方案和是否需要人工 merge review。
-- wrapper version 事实源是 `.evozeus/wrapper.json` 的 `wrapper_version`；Skill release 仍以 GitHub release / `CHANGELOG.md` 为准。
+- 每次 wrapper 升级必须记录 from/to wrapper version、planned files、Skill patch release 动作、验证命令、回滚方案和是否需要人工 merge review。
+- wrapper version 事实源是 `.evozeus/wrapper.json` 的 `wrapper_version`；Skill release 仍以 GitHub release / `CHANGELOG.md` 为准。wrapper harness 迁移如果改变可安装 Skill artifact，也必须同步产生目标 Skill patch release entry、tag 和 release notes。
 
 Wrapper harness version: `{replacements["WRAPPER_VERSION"]}`
 Wrapper manifest: `.evozeus/wrapper.json`
@@ -328,10 +338,23 @@ def main() -> int:
     actions.extend(copy_templates(target, replacements, args.force))
     actions.extend(ensure_project_pointer(target, args.repo, args.force))
     actions.extend(inject_evolution_method(target, replacements))
+    runtime_bundle = discover_runtime_bundle(target)
+    runtime_manifest = {
+        "instruction_surface": runtime_bundle["instruction_surface"],
+        "required_files": runtime_bundle["required_files"],
+        "optional_files": runtime_bundle["optional_files"],
+        "external_tools": runtime_bundle["external_tools"],
+    }
     actions.append(
         write_wrapper_manifest(
             target,
-            build_wrapper_manifest(args.repo, WRAPPER_VERSION, WRAPPER_MANAGED_FILES, []),
+            build_wrapper_manifest(
+                args.repo,
+                WRAPPER_VERSION,
+                WRAPPER_MANAGED_FILES,
+                [],
+                runtime_bundle=runtime_manifest,
+            ),
             args.force,
         )
     )
@@ -347,7 +370,8 @@ def main() -> int:
     visibility_flag = "--public" if visibility == "public" else "--private"
     print("\nNext commands from the target folder:")
     print(f"python3 scripts/evozeus_wrapper_preflight.py doctor --repo {args.repo} --allow-missing-repo")
-    print("python3 scripts/evozeus_wrapper_preflight.py structure")
+    print("python3 scripts/evozeus_wrapper_preflight.py runtime")
+    print("python3 scripts/evozeus_wrapper_preflight.py maintainer")
     print("git init")
     print("git add .")
     print('git commit -m "Initialize wrapped Skill dashboard"')

@@ -59,8 +59,8 @@ python3 scripts/evozeus_wrapper.py skill diagnose --target /absolute/path/to/my-
 python3 scripts/evozeus_wrapper.py skill transform --mode bootstrap --target /absolute/path/to/my-skill --repo MetaInFLow/my-skill --instruction-surface <relative path> --visibility private --dry-run --json
 python3 scripts/evozeus_wrapper.py publish reinstall --skill-name my-skill --canonical-path /absolute/path/to/my-skill --target codex --dry-run --json
 python3 scripts/evozeus_wrapper.py hook start-check --target /absolute/path/to/my-skill --latest-version v0.5.0 --json
-python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/my-skill --latest-version v0.4.0 --json
-python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/my-skill --latest-version v0.4.0 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/my-skill --latest-version v0.5.0 --json
+python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/my-skill --latest-version v0.5.0 --dry-run --json
 ```
 
 如果 `env diagnose` 返回 `next_action: install_evozeus`，先安装 / 初始化 EvoZeus，不进入目标 repo transform。如果没有给 `Visibility`，Agent 必须先问用户选择 `public` 还是 `private`。如果本地发现多个 repo clone 或多个 real-directory 安装副本，必须先让用户选择 canonical repo 或归档策略。
@@ -153,7 +153,8 @@ target-skill/
 
 ```bash
 python3 scripts/evozeus_wrapper_preflight.py doctor --repo MetaInFLow/my-skill --allow-missing-repo
-python3 scripts/evozeus_wrapper_preflight.py structure
+python3 scripts/evozeus_wrapper_preflight.py runtime
+python3 scripts/evozeus_wrapper_preflight.py maintainer
 python3 scripts/evozeus_wrapper_preflight.py version --repo MetaInFLow/my-skill
 python3 scripts/evozeus_wrapper_preflight.py issue --file issue.md
 python3 scripts/evozeus_wrapper_preflight.py pr --design-doc docs/designs/2026-06-26-example.md
@@ -181,7 +182,7 @@ python3 scripts/evozeus_wrapper_preflight.py release --tag v0.1.0 --release-note
 - `MINOR`：新增能力、新增必需证据规则、新增 harness 行为。
 - `PATCH`：文案、示例、bug fix、校验修复或不破坏兼容性的澄清。
 
-新建目标 repo 的首个 wrapped Skill release 使用 `v0.1.0`。已有 repo 走 `adopt`，保留既有 Skill release；`.evozeus/wrapper.json` 中的 wrapper harness version 是另一条版本轴。
+新建目标 repo 的首个 wrapped Skill release 使用 `v0.1.0`。已有 repo 走 `adopt`，保留既有 Skill release；`.evozeus/wrapper.json` 中的 wrapper harness version 是另一条版本轴。wrapper harness 迁移如果改变可安装 Skill artifact，也必须同步产生目标 Skill patch release entry、tag 和 release notes。
 
 ## 边界
 

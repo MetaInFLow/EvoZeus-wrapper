@@ -35,6 +35,11 @@ REQUIRED_WRAPPER_FILES = [
     "scripts/evozeus_wrapper_preflight.py",
 ]
 
+MAINTAINER_REQUIRED_FILES = [
+    ".evozeus/wrapper.json",
+    *REQUIRED_WRAPPER_FILES,
+]
+
 WRAPPER_MANAGED_FILES = [
     "WRAPPER.md",
     ".evozeus/feedback-policy.json",
@@ -92,6 +97,14 @@ DEFAULT_FEEDBACK_POLICY = {
 VALID_MANAGEMENT_MODES = {"full_managed", "semi_managed", "manual"}
 VALID_STRICTNESS_LEVELS = {"weak", "medium", "strong"}
 VALID_FEEDBACK_ROUTES = {"target_skill", "wrapper", "both", "none"}
+RUNTIME_REFERENCE_RE = re.compile(
+    r"(?P<path>(?:references|scripts|assets|templates|agents)/[A-Za-z0-9_.@()/+=,~ -]+)",
+)
+WRAPPER_RUNTIME_SECTION_HEADINGS = {
+    "## EvoZeus-wrapper 状态检查",
+    "## 自进化方法",
+    "## EvoZeus-wrapper",
+}
 CONTROL_SKILL_NAME_TOKENS = (
     "bootstrap",
     "control",
@@ -411,6 +424,27 @@ def describe_install_path(path: Path, target: Path) -> dict[str, Any]:
     }
 
 
+def infer_install_mode(installs: list[dict[str, Any]], canonical_path: str) -> str:
+    if not installs:
+        return "unknown"
+    modes: list[str] = []
+    for install in installs:
+        kind = install.get("kind")
+        path = Path(str(install.get("path") or ""))
+        if kind == "symlink" and install.get("resolved_path") == canonical_path:
+            modes.append("symlink")
+        elif kind == "directory" and (path / ".evozeus" / "wrapper.json").exists():
+            modes.append("repo-clone")
+        elif kind == "directory":
+            modes.append("runtime-copy")
+        elif kind == "symlink":
+            modes.append("symlink")
+        else:
+            modes.append("unknown")
+    unique = list(dict.fromkeys(modes))
+    return unique[0] if len(unique) == 1 else "mixed"
+
+
 def diagnose_harness_state(target: Path) -> dict[str, Any]:
     present = [rel for rel in REQUIRED_WRAPPER_FILES if (target / rel).exists()]
     missing = [rel for rel in REQUIRED_WRAPPER_FILES if not (target / rel).exists()]
@@ -539,6 +573,126 @@ def skill_entries(target: Path) -> list[dict[str, Any]]:
 
 def existing_relative_files(target: Path, paths: list[str]) -> list[str]:
     return [path for path in paths if (target / path).is_file()]
+
+
+def normalize_relative_path(raw: str) -> str:
+    cleaned = raw.strip().strip("`'\"").strip()
+    cleaned = cleaned.rstrip(".,;:)")
+    return cleaned.replace("\\", "/")
+
+
+def referenced_runtime_files(text: str) -> list[str]:
+    files: list[str] = []
+    for match in RUNTIME_REFERENCE_RE.finditer(text):
+        rel = normalize_relative_path(match.group("path"))
+        if rel and rel not in files:
+            files.append(rel)
+    return files
+
+
+def strip_wrapper_runtime_sections(text: str) -> str:
+    kept: list[str] = []
+    skipping = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped in WRAPPER_RUNTIME_SECTION_HEADINGS:
+            skipping = True
+            continue
+        if skipping and re.match(r"^#{1,6}\s+", stripped) and stripped not in WRAPPER_RUNTIME_SECTION_HEADINGS:
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def add_tree_files(target: Path, dirname: str, files: list[str]) -> None:
+    root = target / dirname
+    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            rel = str(path.relative_to(target))
+            if rel not in files:
+                files.append(rel)
+
+
+def discover_runtime_bundle(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    manifest = load_wrapper_manifest(target)
+    runtime_bundle = manifest.get("runtime_bundle") if manifest else None
+    if isinstance(runtime_bundle, dict):
+        instruction_surface = str(runtime_bundle.get("instruction_surface") or "SKILL.md")
+        required = [
+            normalize_relative_path(path)
+            for path in runtime_bundle.get("required_files", [])
+            if isinstance(path, str) and path.strip()
+        ]
+        if instruction_surface not in required:
+            required.insert(0, instruction_surface)
+        optional = [
+            normalize_relative_path(path)
+            for path in runtime_bundle.get("optional_files", [])
+            if isinstance(path, str) and path.strip()
+        ]
+        return {
+            "instruction_surface": instruction_surface,
+            "required_files": list(dict.fromkeys(required)),
+            "optional_files": list(dict.fromkeys(optional)),
+            "external_tools": runtime_bundle.get("external_tools", []),
+            "source": ".evozeus/wrapper.json runtime_bundle",
+        }
+
+    architecture = detect_target_architecture(target)
+    instruction_surface = architecture["root_entry"] or "SKILL.md"
+    required_files = [instruction_surface]
+    text = read_text_if_small(target / instruction_surface, limit=200_000)
+    business_text = strip_wrapper_runtime_sections(text)
+    for rel in referenced_runtime_files(business_text):
+        if rel not in required_files:
+            required_files.append(rel)
+    for dirname in ["references", "assets", "templates"]:
+        if f"{dirname}/" in business_text:
+            add_tree_files(target, dirname, required_files)
+    if "scripts/" in business_text:
+        add_tree_files(target, "scripts", required_files)
+    for metadata in ["agents/openai.yaml"]:
+        if (target / metadata).is_file() and metadata not in required_files:
+            required_files.append(metadata)
+    return {
+        "instruction_surface": instruction_surface,
+        "required_files": required_files,
+        "optional_files": [],
+        "external_tools": [],
+        "source": "discovered_from_instruction_surface",
+    }
+
+
+def check_runtime_bundle(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    bundle = discover_runtime_bundle(target)
+    required = bundle["required_files"]
+    missing = [rel for rel in required if not (target / rel).is_file()]
+    return {
+        "status": "missing_required_files" if missing else "ok",
+        "instruction_surface": bundle["instruction_surface"],
+        "required_files": required,
+        "optional_files": bundle["optional_files"],
+        "missing_files": missing,
+        "external_tools": bundle["external_tools"],
+        "source": bundle["source"],
+    }
+
+
+def check_maintainer_bundle(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    missing = [rel for rel in MAINTAINER_REQUIRED_FILES if not (target / rel).exists()]
+    present = [rel for rel in MAINTAINER_REQUIRED_FILES if (target / rel).exists()]
+    return {
+        "status": "missing_required_files" if missing else "ok",
+        "required_files": MAINTAINER_REQUIRED_FILES,
+        "present_files": present,
+        "missing_files": missing,
+    }
 
 
 def plugin_manifest_files(target: Path) -> list[str]:
@@ -1093,6 +1247,7 @@ def diagnose_skill(
         installs=installs,
         runner=runner,
     )
+    canonical_path = source_contract["canonical_path"]
     return {
         "stage": "target_skill_diagnosis",
         "skill": {
@@ -1115,6 +1270,9 @@ def diagnose_skill(
         "version": version,
         "installs": installs,
         "harness": harness,
+        "runtime_bundle": check_runtime_bundle(target),
+        "maintainer_bundle": check_maintainer_bundle(target),
+        "install_mode": infer_install_mode(installs, canonical_path),
         "source_contract": source_contract,
         "publication": {
             "visibility": repo_state.get("visibility"),
@@ -1240,6 +1398,7 @@ def build_wrapper_manifest(
     managed_files: list[str],
     install_links: list[str],
     instruction_surface: str | None = None,
+    runtime_bundle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     manifest = {
         "wrapper_repo": WRAPPER_REPO,
@@ -1248,9 +1407,15 @@ def build_wrapper_manifest(
         "canonical_repo": repo,
         "managed_files": managed_files,
         "install_links": install_links,
+        "maintainer_bundle": {
+            "required_files": MAINTAINER_REQUIRED_FILES,
+        },
+        "install_modes": ["symlink", "runtime_copy", "repo_clone"],
     }
     if instruction_surface:
         manifest["instruction_surface"] = instruction_surface
+    if runtime_bundle:
+        manifest["runtime_bundle"] = runtime_bundle
     return manifest
 
 
@@ -1317,9 +1482,66 @@ def classify_install_action(install_path: Path, canonical_path: Path) -> dict[st
     }
 
 
-def plan_reinstall(skill_name: str, canonical_path: Path, home: Path, targets: list[str]) -> dict[str, Any]:
+def classify_runtime_copy_action(install_path: Path, canonical_path: Path) -> dict[str, Any]:
+    bundle_check = check_runtime_bundle(canonical_path)
+    action = "copy_runtime_bundle" if bundle_check["status"] == "ok" else "runtime_bundle_missing_required_files"
+    return {
+        "path": str(install_path),
+        "kind": path_kind(install_path),
+        "resolved_path": resolve_path(install_path),
+        "canonical_path": str(canonical_path.expanduser().resolve()),
+        "action": action,
+        "reason": (
+            "copy only runtime bundle files; maintainer governance files are excluded"
+            if action == "copy_runtime_bundle"
+            else "runtime bundle is missing required files"
+        ),
+        "runtime_files": bundle_check["required_files"],
+        "missing_files": bundle_check["missing_files"],
+    }
+
+
+def classify_repo_clone_action(install_path: Path, canonical_path: Path) -> dict[str, Any]:
+    maintainer_check = check_maintainer_bundle(canonical_path)
+    kind = path_kind(install_path)
+    resolved = resolve_path(install_path)
+    if maintainer_check["status"] != "ok":
+        action = "maintainer_bundle_missing_required_files"
+        reason = "canonical repo is not a complete maintainer bundle"
+    elif kind == "missing":
+        action = "clone_repo"
+        reason = "install path is missing and should receive a full repo clone"
+    elif kind == "directory" and (install_path / ".git").exists():
+        action = "use_existing_repo_clone"
+        reason = "install path is already a git directory; verify its origin before use"
+    elif kind == "symlink":
+        action = "replace_symlink_with_repo_clone"
+        reason = "repo-clone mode requires a real repo directory, not a symlink"
+    else:
+        action = "needs_user_confirmation"
+        reason = "install path is not a usable repo clone"
+    return {
+        "path": str(install_path),
+        "kind": kind,
+        "resolved_path": resolved,
+        "canonical_path": str(canonical_path.expanduser().resolve()),
+        "action": action,
+        "reason": reason,
+        "maintainer_missing_files": maintainer_check["missing_files"],
+    }
+
+
+def plan_reinstall(
+    skill_name: str,
+    canonical_path: Path,
+    home: Path,
+    targets: list[str],
+    mode: str = "symlink",
+) -> dict[str, Any]:
     home = home.expanduser().resolve()
     canonical_path = canonical_path.expanduser().resolve()
+    mode = mode.replace("_", "-")
+    mode = mode if mode in {"symlink", "runtime-copy", "repo-clone"} else "symlink"
     runtime_roots = {
         "codex": home / ".codex" / "skills",
         "agents": home / ".agents" / "skills",
@@ -1329,11 +1551,17 @@ def plan_reinstall(skill_name: str, canonical_path: Path, home: Path, targets: l
     for target_name in selected:
         root = runtime_roots[target_name] if target_name in runtime_roots else Path(target_name).expanduser()
         install_path = root / skill_name if target_name in runtime_roots else root
-        actions.append(classify_install_action(install_path, canonical_path))
+        if mode == "runtime-copy":
+            actions.append(classify_runtime_copy_action(install_path, canonical_path))
+        elif mode == "repo-clone":
+            actions.append(classify_repo_clone_action(install_path, canonical_path))
+        else:
+            actions.append(classify_install_action(install_path, canonical_path))
     return {
         "stage": "publish_reinstall",
         "skill_name": skill_name,
         "canonical_path": str(canonical_path),
+        "install_mode": mode,
         "actions": actions,
     }
 
@@ -1394,7 +1622,7 @@ def plan_harness_upgrade(
         root_status_section = f"{instruction_surface} EvoZeus-wrapper status check section (instruction surface prelude)"
         root_wrapper_section = f"{instruction_surface} EvoZeus-wrapper section or migration note (append only)"
     current = manifest.get("wrapper_version") if manifest else None
-    latest = latest_version or current
+    latest = latest_version
 
     if not current:
         status = "missing_manifest"
@@ -1406,6 +1634,7 @@ def plan_harness_upgrade(
     migration_doc = wrapper_migration_doc_path(current, latest, today)
     needs_upgrade = status in {"auto_pr", "needs_merge_review", "requires_confirmation"}
     needs_repair = status in {"missing_manifest", "latest_unknown"}
+    needs_skill_release = needs_upgrade or status == "missing_manifest"
 
     planned_files: list[str] = []
     if needs_upgrade or needs_repair:
@@ -1414,6 +1643,7 @@ def plan_harness_upgrade(
                 root_status_section,
                 root_wrapper_section,
                 ".evozeus/wrapper.json",
+                "CHANGELOG.md Skill release patch entry",
                 WRAPPER_MIGRATION_README,
             ]
         )
@@ -1443,7 +1673,8 @@ def plan_harness_upgrade(
 
     canonical_repo = manifest.get("canonical_repo") if manifest else None
     validation = [
-        "python3 scripts/evozeus_wrapper_preflight.py structure",
+        "python3 scripts/evozeus_wrapper_preflight.py runtime",
+        "python3 scripts/evozeus_wrapper_preflight.py maintainer",
     ]
     if canonical_repo:
         validation.append(f"python3 scripts/evozeus_wrapper_preflight.py doctor --repo {canonical_repo}")
@@ -1451,6 +1682,11 @@ def plan_harness_upgrade(
         validation.append(
             "python3 scripts/evozeus_wrapper.py harness upgrade-check "
             f"--target {target} --latest-version {latest} --json"
+        )
+    if needs_skill_release:
+        validation.append(
+            "python3 scripts/evozeus_wrapper_preflight.py release "
+            "--tag <next-skill-version> --release-notes release-notes.md"
         )
 
     return {
@@ -1465,6 +1701,20 @@ def plan_harness_upgrade(
         "requires_confirmation": status in {"missing_manifest", "latest_unknown", "needs_merge_review", "requires_confirmation"},
         "status_check_first": True,
         "append_only": True,
+        "skill_release": {
+            "required": needs_skill_release,
+            "recommended_bump": "PATCH" if needs_skill_release else None,
+            "reason": (
+                "wrapper harness migration changes the installable Skill artifact and must be released as a Skill patch"
+                if needs_skill_release
+                else "no wrapper artifact change is planned"
+            ),
+            "changelog_policy": (
+                "add a Skill patch release entry for wrapper-only migrations even when target business rules do not change"
+                if needs_skill_release
+                else "none"
+            ),
+        },
         "evolution_surface_policy": (
             f"add or refresh the wrapper-owned status prelude in {instruction_surface} before the main chain, then append "
             "the EvoZeus-wrapper section or a migration note; never rewrite target business rules"

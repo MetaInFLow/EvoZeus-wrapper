@@ -196,7 +196,7 @@ Wrapped targets also carry `.evozeus/feedback-policy.json` and `.evozeus/audit-r
 
 ### Runtime Hooks
 
-Start hooks should run harness version checks before the target Skill main chain:
+When a runtime hook is installed, start hooks should run harness version checks before wrapper-managed execution:
 
 ```bash
 python3 scripts/evozeus_wrapper.py hook start-check \
@@ -205,7 +205,7 @@ python3 scripts/evozeus_wrapper.py hook start-check \
   --json
 ```
 
-If `decision.level == "block"`, do not enter the target Skill. If `decision.level == "warn"`, advisory mode may continue while opening a harness upgrade PR; strict mode blocks.
+If `decision.level == "block"`, stop strict hook execution or maintainer work before changing the target Skill. If `decision.level == "warn"`, advisory mode may continue while opening a harness upgrade PR. If `.evozeus/wrapper.json` or wrapper tooling is unavailable, treat the install as runtime-only and continue the target Skill business flow.
 
 ### 8. Harness Upgrade
 
@@ -214,12 +214,12 @@ Use `skills/harness-upgrade/SKILL.md`.
 ```bash
 python3 scripts/evozeus_wrapper.py harness upgrade-check \
   --target /absolute/path/to/target-skill-or-kit \
-  --latest-version v0.4.0 \
+  --latest-version v0.5.0 \
   --json
 
 python3 scripts/evozeus_wrapper.py harness upgrade \
   --target /absolute/path/to/target-skill-or-kit \
-  --latest-version v0.4.0 \
+  --latest-version v0.5.0 \
   --dry-run \
   --json
 ```

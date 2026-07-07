@@ -64,6 +64,12 @@ def main() -> int:
     reinstall.add_argument("--skill-name", required=True)
     reinstall.add_argument("--canonical-path", required=True)
     reinstall.add_argument("--target", action="append", required=True, help="codex, agents, all, or an explicit install path.")
+    reinstall.add_argument(
+        "--mode",
+        choices=["symlink", "runtime-copy", "runtime_copy", "repo-clone", "repo_clone"],
+        default="symlink",
+        help="Install strategy to plan.",
+    )
     reinstall.add_argument("--dry-run", action="store_true", help="Only print planned reinstall actions.")
     reinstall.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
 
@@ -128,7 +134,7 @@ def main() -> int:
         target = Path(args.target)
         if args.mode == "verify":
             preflight = Path(__file__).resolve().parent / "evozeus_wrapper_preflight.py"
-            result = run_command([sys.executable, str(preflight), "structure", "--target", str(target)])
+            result = run_command([sys.executable, str(preflight), "maintainer", "--target", str(target)])
             if args.json:
                 print(
                     json.dumps(
@@ -190,7 +196,7 @@ def main() -> int:
         if not args.dry_run:
             print("write operations are not implemented until archive confirmation is added", file=sys.stderr)
             return 1
-        report = plan_reinstall(args.skill_name, Path(args.canonical_path), Path.home(), args.target)
+        report = plan_reinstall(args.skill_name, Path(args.canonical_path), Path.home(), args.target, mode=args.mode)
         print_report(report, args.json, "publish")
         return 0
     if args.group == "hook" and args.command == "start-check":

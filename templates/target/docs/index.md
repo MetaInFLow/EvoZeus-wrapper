@@ -49,7 +49,9 @@ python3 scripts/evozeus_wrapper.py loop audit \
 
 ## 进化规则
 
-`SKILL.md` 的 frontmatter 后第一段必须是 `EvoZeus-wrapper 状态检查`。该状态检查先确认当前 Skill release、wrapper harness version 和 source contract；全部 OK 后，才进入目标 Skill 原本主链路。
+`SKILL.md` 的 frontmatter 后可以包含 `EvoZeus-wrapper 状态检查`，但该段只约束 maintainer/canonical repo 会话中的修改、发布、迁移和 wrapper 维护动作。
+
+如果 `.evozeus/wrapper.json` 或 wrapper tooling 不存在，视为 runtime-only install，继续目标 Skill 业务流程；不要仅因 wrapper 治理文件缺失阻断普通运行。
 
 Wrapper-managed Skill 的源头发现顺序固定：
 
@@ -59,7 +61,7 @@ Wrapper-managed Skill 的源头发现顺序固定：
 4. 检查 `~/.codex/skills/<skill-name>` 和 `~/.agents/skills/<skill-name>`，它们只能是 runtime pointer。
 5. 只有 wrapper 状态无法确认时，才进入 GitHub user/org/public search。
 
-每次运行 Skill 前，先检查 GitHub latest release 是否有新版本：
+每次维护、发布或迁移 Skill 前，先检查 GitHub latest release 是否有新版本：
 
 ```bash
 python3 scripts/evozeus_wrapper_preflight.py doctor --repo {{REPO_NAME}}
@@ -75,7 +77,7 @@ python3 scripts/evozeus_wrapper.py hook start-check \
   --json
 ```
 
-hook 只在 `decision.allow` 为 true 时进入目标 Skill 主链路；`decision.level=block` 时必须先处理 harness 升级或修复。
+hook 只在 `decision.allow` 为 true 时进入 wrapper-managed hook 主链路；`decision.level=block` 时必须先处理 harness 升级或修复。未安装 hook 或 wrapper tooling 的 runtime-only install 继续目标 Skill 业务流程。
 
 每次 Skill 更新必须先写 design doc，再开 PR。根目录 `SKILL.md` 是 repo 化后的可运行入口；`~/.evozeus/.projects/{{REPO_NAME}}` 和 runtime 安装路径应指向同一个 canonical repo，不保留 copied install 作为第二事实源，也不要直接修改 `.codex/skills/...` 或 `.agents/skills/...`。
 
@@ -86,7 +88,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path
 python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/this-skill --latest-version <wrapper-version> --dry-run --json
 ```
 
-迁移记录写入 `docs/wrapper-migrations/`，并记录 from/to wrapper version、planned files、`SKILL.md` 状态检查处理、append-only 处理、验证命令和回滚方案。wrapper harness version 的事实源是 `.evozeus/wrapper.json`；Skill release 仍以 GitHub release 和 `CHANGELOG.md` 为准。
+迁移记录写入 `docs/wrapper-migrations/`，并记录 from/to wrapper version、planned files、`SKILL.md` 状态检查处理、append-only 处理、Skill patch release 处理、验证命令和回滚方案。wrapper harness version 的事实源是 `.evozeus/wrapper.json`；Skill release 仍以 GitHub release 和 `CHANGELOG.md` 为准。wrapper harness 迁移如果改变可安装 Skill artifact，也必须同步产生目标 Skill patch release entry、tag 和 release notes。
 
 Design doc 至少回答：
 
@@ -109,7 +111,8 @@ Design doc 至少回答：
 
 ```bash
 python3 scripts/evozeus_wrapper_preflight.py doctor --repo {{REPO_NAME}}
-python3 scripts/evozeus_wrapper_preflight.py structure
+python3 scripts/evozeus_wrapper_preflight.py runtime
+python3 scripts/evozeus_wrapper_preflight.py maintainer
 python3 scripts/evozeus_wrapper_preflight.py version --repo {{REPO_NAME}}
 python3 scripts/evozeus_wrapper_preflight.py pr --design-doc docs/designs/<design-doc>.md
 python3 scripts/evozeus_wrapper_preflight.py release --tag {{INITIAL_VERSION}} --release-notes release-notes.md

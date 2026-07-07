@@ -1,15 +1,21 @@
 from datetime import date
+import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
 from scripts.evozeus_wrapper_lifecycle import (
     build_wrapper_manifest,
+    check_maintainer_bundle,
+    check_runtime_bundle,
     classify_pr_permission,
     classify_wrapper_upgrade,
     detect_target_architecture,
     diagnose_environment,
     diagnose_skill,
+    discover_runtime_bundle,
     diagnose_source_contract,
     load_wrapper_manifest,
     plan_harness_upgrade,
@@ -392,6 +398,27 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             self.assertEqual(report["publication"]["visibility"], "PRIVATE")
             self.assertEqual(report["version"]["status"], "missing_version_requires_owner_choice")
 
+    def test_diagnose_skill_reports_runtime_and_maintainer_bundles_separately(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text(
+                '---\nname: "skill"\n---\n# Skill\nRead `references/config.md`.\n',
+                encoding="utf-8",
+            )
+            (target / "references").mkdir()
+            (target / "references" / "config.md").write_text("# Config\n", encoding="utf-8")
+
+            report = diagnose_skill(target=target, repo=None, skill_name=None, home=home)
+
+            self.assertEqual(report["runtime_bundle"]["status"], "ok")
+            self.assertIn("references/config.md", report["runtime_bundle"]["required_files"])
+            self.assertEqual(report["maintainer_bundle"]["status"], "missing_required_files")
+            self.assertIn(".evozeus/wrapper.json", report["maintainer_bundle"]["missing_files"])
+            self.assertEqual(report["install_mode"], "unknown")
+
 
 class WrapperManifestTest(unittest.TestCase):
     def test_write_and_load_wrapper_manifest(self):
@@ -615,6 +642,232 @@ class ReinstallPlanningTest(unittest.TestCase):
 
             self.assertEqual(plan["actions"][0]["action"], "needs_user_confirmation")
 
+    def test_plan_reinstall_runtime_copy_lists_only_runtime_bundle_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            canonical = Path(tmp) / "repo"
+            canonical.mkdir()
+            (canonical / "SKILL.md").write_text(
+                '---\nname: "skill"\n---\n# Skill\nRead `references/config.md` and run `scripts/run.mjs`.\n',
+                encoding="utf-8",
+            )
+            (canonical / "references").mkdir()
+            (canonical / "references" / "config.md").write_text("# Config\n", encoding="utf-8")
+            (canonical / "scripts").mkdir()
+            (canonical / "scripts" / "run.mjs").write_text("console.log('ok')\n", encoding="utf-8")
+            (canonical / ".evozeus").mkdir()
+            (canonical / ".evozeus" / "wrapper.json").write_text("{}", encoding="utf-8")
+
+            plan = plan_reinstall("skill", canonical, home, ["codex"], mode="runtime-copy")
+
+            action = plan["actions"][0]
+            self.assertEqual(plan["install_mode"], "runtime-copy")
+            self.assertEqual(action["action"], "copy_runtime_bundle")
+            self.assertIn("SKILL.md", action["runtime_files"])
+            self.assertIn("references/config.md", action["runtime_files"])
+            self.assertIn("scripts/run.mjs", action["runtime_files"])
+            self.assertNotIn(".evozeus/wrapper.json", action["runtime_files"])
+
+
+class ArtifactSeparationTest(unittest.TestCase):
+    def test_runtime_bundle_passes_without_evozeus_when_referenced_files_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text(
+                '---\nname: "skill"\n---\n# Skill\nRead `references/config.md` and use `scripts/run.mjs`.\n',
+                encoding="utf-8",
+            )
+            (target / "references").mkdir()
+            (target / "references" / "config.md").write_text("# Config\n", encoding="utf-8")
+            (target / "scripts").mkdir()
+            (target / "scripts" / "run.mjs").write_text("console.log('ok')\n", encoding="utf-8")
+
+            bundle = discover_runtime_bundle(target)
+            check = check_runtime_bundle(target)
+
+            self.assertEqual(bundle["instruction_surface"], "SKILL.md")
+            self.assertEqual(check["status"], "ok")
+            self.assertIn("references/config.md", check["required_files"])
+            self.assertIn("scripts/run.mjs", check["required_files"])
+            self.assertNotIn(".evozeus/wrapper.json", check["required_files"])
+
+    def test_runtime_bundle_fails_when_instruction_references_missing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text(
+                '---\nname: "skill"\n---\n# Skill\nRead `references/missing.md`.\n',
+                encoding="utf-8",
+            )
+
+            check = check_runtime_bundle(target)
+
+            self.assertEqual(check["status"], "missing_required_files")
+            self.assertIn("references/missing.md", check["missing_files"])
+
+    def test_runtime_bundle_ignores_wrapper_maintenance_references(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text(
+                '---\nname: "skill"\n---\n'
+                "## EvoZeus-wrapper 状态检查\n\n"
+                "Maintainer command: `python3 scripts/evozeus_wrapper_preflight.py maintainer`.\n"
+                "If `.evozeus/wrapper.json` or wrapper tooling is unavailable, treat this as a "
+                "runtime-only install and continue with the target Skill business flow.\n\n"
+                "# Skill\n"
+                "Read `references/config.md`.\n",
+                encoding="utf-8",
+            )
+            (target / "references").mkdir()
+            (target / "references" / "config.md").write_text("# Config\n", encoding="utf-8")
+
+            bundle = discover_runtime_bundle(target)
+
+            self.assertIn("references/config.md", bundle["required_files"])
+            self.assertNotIn("scripts/evozeus_wrapper_preflight.py", bundle["required_files"])
+
+    def test_maintainer_bundle_requires_wrapper_governance_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text('---\nname: "skill"\n---\n', encoding="utf-8")
+
+            check = check_maintainer_bundle(target)
+
+            self.assertEqual(check["status"], "missing_required_files")
+            self.assertIn(".evozeus/wrapper.json", check["missing_files"])
+            self.assertIn(".evozeus/feedback-policy.json", check["missing_files"])
+            self.assertIn(".evozeus/audit-rule.md", check["missing_files"])
+
+    def test_status_prelude_template_uses_runtime_only_fallback(self):
+        template = Path("templates/target/WRAPPER.md").read_text(encoding="utf-8")
+
+        self.assertIn("runtime-only install", template)
+        self.assertNotIn("Continue to the target Skill's main flow only after all three are OK.", template)
+
+    def test_preflight_runtime_allows_runtime_only_install_without_evozeus(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text(
+                '---\nname: "skill"\n---\n# Skill\nRead `references/config.md`.\n',
+                encoding="utf-8",
+            )
+            (target / "references").mkdir()
+            (target / "references" / "config.md").write_text("# Config\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper_preflight.py",
+                    "runtime",
+                    "--target",
+                    str(target),
+                ],
+                cwd=Path.cwd(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("runtime bundle is complete", result.stdout)
+
+    def test_preflight_maintainer_requires_wrapper_governance_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text('---\nname: "skill"\n---\n# Skill\n', encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper_preflight.py",
+                    "maintainer",
+                    "--target",
+                    str(target),
+                ],
+                cwd=Path.cwd(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(".evozeus/wrapper.json", result.stderr)
+
+    def test_preflight_runtime_rejects_blocking_wrapper_prelude(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text(
+                '---\nname: "skill"\n---\n'
+                "## EvoZeus-wrapper 状态检查\n\n"
+                "全部 OK 后，再进入主链路。\n\n"
+                "# Skill\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper_preflight.py",
+                    "runtime",
+                    "--target",
+                    str(target),
+                ],
+                cwd=Path.cwd(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("runtime-only install", result.stderr)
+
+    def test_publish_reinstall_cli_accepts_runtime_copy_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            canonical = Path(tmp) / "repo"
+            canonical.mkdir()
+            (canonical / "SKILL.md").write_text(
+                '---\nname: "skill"\n---\n# Skill\nRead `references/config.md`.\n',
+                encoding="utf-8",
+            )
+            (canonical / "references").mkdir()
+            (canonical / "references" / "config.md").write_text("# Config\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper.py",
+                    "publish",
+                    "reinstall",
+                    "--skill-name",
+                    "skill",
+                    "--canonical-path",
+                    str(canonical),
+                    "--target",
+                    str(Path(tmp) / "install"),
+                    "--mode",
+                    "runtime-copy",
+                    "--dry-run",
+                    "--json",
+                ],
+                cwd=Path.cwd(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["install_mode"], "runtime-copy")
+            self.assertEqual(report["actions"][0]["action"], "copy_runtime_bundle")
+            self.assertIn("references/config.md", report["actions"][0]["runtime_files"])
+            self.assertNotIn(".evozeus/wrapper.json", report["actions"][0]["runtime_files"])
+
 
 class EvolutionAndUpgradePlanningTest(unittest.TestCase):
     def test_classify_pr_permission(self):
@@ -720,6 +973,37 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertIn("SKILL.md EvoZeus-wrapper section or migration note (append only)", plan["planned_files"])
             self.assertIn("docs/wrapper-migrations/README.md", plan["planned_files"])
             self.assertIn(".evozeus/wrapper.json", plan["planned_files"])
+            self.assertIn("CHANGELOG.md Skill release patch entry", plan["planned_files"])
+            self.assertTrue(plan["skill_release"]["required"])
+            self.assertEqual(plan["skill_release"]["recommended_bump"], "PATCH")
+            self.assertEqual(
+                plan["skill_release"]["reason"],
+                "wrapper harness migration changes the installable Skill artifact and must be released as a Skill patch",
+            )
+            self.assertIn(
+                "python3 scripts/evozeus_wrapper_preflight.py release --tag <next-skill-version> --release-notes release-notes.md",
+                plan["validation"],
+            )
+
+    def test_plan_harness_upgrade_does_not_require_skill_release_when_up_to_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.5.0", ["WRAPPER.md"], []),
+            )
+
+            plan = plan_harness_upgrade(
+                target=target,
+                latest_version="v0.5.0",
+                managed_dirty=False,
+                today=date(2026, 7, 7),
+            )
+
+            self.assertEqual(plan["upgrade_status"], "up_to_date")
+            self.assertFalse(plan["skill_release"]["required"])
+            self.assertNotIn("CHANGELOG.md Skill release patch entry", plan["planned_files"])
 
     def test_plan_harness_upgrade_requires_repair_when_manifest_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -740,6 +1024,22 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
                 plan["migration"]["doc_path"],
                 "docs/wrapper-migrations/2026-06-27-unknown-to-v0.2.0.md",
             )
+
+    def test_plan_harness_upgrade_requires_latest_version_instead_of_defaulting_to_current(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.4.0", ["WRAPPER.md"], []),
+            )
+
+            plan = plan_harness_upgrade(target=target)
+
+            self.assertEqual(plan["current_version"], "v0.4.0")
+            self.assertIsNone(plan["latest_version"])
+            self.assertEqual(plan["upgrade_status"], "latest_unknown")
+            self.assertEqual(plan["recommended_action"], "provide_latest_wrapper_version")
 
     def test_plan_harness_upgrade_uses_agents_root_entry_for_runtime_bundle(self):
         with tempfile.TemporaryDirectory() as tmp:
