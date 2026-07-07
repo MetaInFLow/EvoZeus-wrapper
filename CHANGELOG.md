@@ -14,6 +14,7 @@ All notable changes to EvoZeus-wrapper are recorded here.
 - Kept global EvoZeus installation and project pointers under `~/.evozeus`.
 - Added legacy manifest fallback, conflict detection, migration execution, and JSON output fields for `target_infra_dir`, `legacy_infra_dir`, `manifest_path`, `legacy_manifest_detected`, and `migration_required`.
 - Added `loop audit` to produce feedback capture decisions and Skill Feedback Issue drafts.
+- Hardened `version` preflight so local changelog versions ahead of GitHub latest release fail unless `--no-release-needed` is explicit.
 - Added target templates for feedback policy and audit rule files.
 
 ### Verification

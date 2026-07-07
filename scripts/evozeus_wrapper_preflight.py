@@ -798,7 +798,16 @@ def check_version(args: argparse.Namespace) -> None:
     if latest_key > current_key:
         fail(f"newer Skill release available: {latest_tag} > local {current_tag}. Update before running.")
     if latest_key < current_key:
-        ok(f"local changelog version {current_tag} is ahead of latest GitHub release {latest_tag}")
+        if args.no_release_needed:
+            ok(
+                f"local changelog version {current_tag} is ahead of latest GitHub release {latest_tag}; "
+                "--no-release-needed explicitly bypassed release creation"
+            )
+            return
+        fail(
+            f"local changelog version {current_tag} is ahead of latest GitHub release {latest_tag}. "
+            "Create the GitHub release or rerun with --no-release-needed only for changes that do not affect the installable artifact."
+        )
         return
     ok(f"local Skill version matches latest GitHub release: {current_tag}")
 
@@ -841,6 +850,11 @@ def main() -> int:
     version.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
     version.add_argument("--repo", required=True, help="GitHub repo in OWNER/REPO format.")
     version.add_argument("--current-tag", help="Current local Skill version. Defaults to latest release tag in CHANGELOG.md.")
+    version.add_argument(
+        "--no-release-needed",
+        action="store_true",
+        help="Explicitly allow local changelog to be ahead when the change does not affect the installable artifact.",
+    )
 
     args = parser.parse_args()
     if args.command == "doctor":
