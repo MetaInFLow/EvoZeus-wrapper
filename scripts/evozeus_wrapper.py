@@ -13,6 +13,8 @@ from evozeus_wrapper_lifecycle import (
     diagnose_skill,
     plan_reinstall,
     plan_harness_upgrade,
+    migrate_target_infra_dir,
+    plan_feedback_audit,
     classify_pr_permission,
     run_command,
     stage_label,
@@ -70,6 +72,11 @@ def main() -> int:
     lesson = loop_sub.add_parser("lesson", help="Plan lesson candidate intake.")
     lesson.add_argument("--dry-run", action="store_true", help="Only print next action.")
     lesson.add_argument("--json", action="store_true")
+    audit = loop_sub.add_parser("audit", help="Audit user feedback and plan feedback Issue capture.")
+    audit.add_argument("--target", required=True)
+    audit.add_argument("--user-input", required=True)
+    audit.add_argument("--context", help="Optional redacted context summary.")
+    audit.add_argument("--json", action="store_true")
     issue_to_pr = loop_sub.add_parser("issue-to-pr", help="Plan Issue-to-PR flow.")
     issue_to_pr.add_argument("--write-permission", action="store_true")
     issue_to_pr.add_argument("--fork-permission", action="store_true")
@@ -143,7 +150,7 @@ def main() -> int:
                 f"{instruction_surface} EvoZeus-wrapper section",
             ]
         planned_files = REQUIRED_WRAPPER_FILES + [
-            ".evozeus/wrapper.json",
+            ".evozeus_evoinfra/wrapper.json",
         ] + surface_planned_files
         report = {
             "stage": "target_skill_transform",
@@ -185,6 +192,14 @@ def main() -> int:
         }
         print_report(report, args.json, "loop")
         return 0
+    if args.group == "loop" and args.command == "audit":
+        report = plan_feedback_audit(
+            target=Path(args.target),
+            user_input=args.user_input,
+            context=args.context,
+        )
+        print_report(report, args.json, "loop")
+        return 0
     if args.group == "loop" and args.command == "issue-to-pr":
         if not args.dry_run:
             print("Issue-to-PR writes require explicit confirmation and are not implemented yet", file=sys.stderr)
@@ -206,14 +221,22 @@ def main() -> int:
         print_report(report, args.json, "loop")
         return 0
     if args.group == "harness" and args.command == "upgrade":
-        if not args.dry_run:
-            print("harness upgrade writes require explicit confirmation and are not implemented yet", file=sys.stderr)
-            return 1
-        report = plan_harness_upgrade(
-            target=Path(args.target),
-            latest_version=args.latest_version,
-            managed_dirty=args.managed_dirty,
-        )
+        if args.dry_run:
+            report = plan_harness_upgrade(
+                target=Path(args.target),
+                latest_version=args.latest_version,
+                managed_dirty=args.managed_dirty,
+            )
+        else:
+            try:
+                report = migrate_target_infra_dir(
+                    target=Path(args.target),
+                    latest_version=args.latest_version,
+                    remove_duplicate_legacy=True,
+                )
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
         print_report(report, args.json, "loop")
         return 0
 

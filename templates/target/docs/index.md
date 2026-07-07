@@ -16,7 +16,7 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 | Visibility | `{{VISIBILITY}}` |
 | 当前 Skill 版本 | `{{CURRENT_VERSION}}` |
 | Wrapper harness 版本 | `{{WRAPPER_VERSION}}` |
-| Wrapper manifest | `.evozeus/wrapper.json` |
+| Wrapper manifest | `.evozeus_evoinfra/wrapper.json` |
 | Wrapper migrations | [`docs/wrapper-migrations/`](wrapper-migrations/) |
 | Changelog | [`CHANGELOG.md`]({{REPO_URL}}/blob/main/CHANGELOG.md) |
 | Design docs | [`docs/designs/`](designs/) |
@@ -35,7 +35,7 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 
 `SKILL.md` 的 frontmatter 后第一段必须是 `EvoZeus-wrapper 状态检查`。该状态检查先确认当前 Skill release、wrapper harness version 和 source contract；全部 OK 后，才进入目标 Skill 原本主链路。
 
-`.evozeus/wrapper.json` 的 `integration.mode` 说明当前运行时集成等级：
+`.evozeus_evoinfra/wrapper.json` 的 `integration.mode` 说明当前运行时集成等级：
 
 - `native_host_hook`：宿主或插件 lifecycle hook 已安装，有 hook 文件和 plugin manifest 证据。
 - `bootstrap_skill`：插件 Skill 基础设施可加载控制 Skill，但没有检测到宿主 lifecycle hook。
@@ -46,7 +46,7 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 
 Wrapper-managed Skill 的源头发现顺序固定：
 
-1. 读取 `.evozeus/wrapper.json`。
+1. 读取 `.evozeus_evoinfra/wrapper.json`。
 2. 检查 `~/.evozeus/.projects/{{REPO_NAME}}` 是否指向 canonical repo。
 3. 验证 canonical repo 的 git origin / GitHub repo。
 4. 检查 `~/.codex/skills/<skill-name>` 和 `~/.agents/skills/<skill-name>`，它们只能是 runtime pointer。
@@ -68,7 +68,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path
 python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/this-skill --latest-version <wrapper-version> --dry-run --json
 ```
 
-迁移记录写入 `docs/wrapper-migrations/`，并记录 from/to wrapper version、planned files、`SKILL.md` 状态检查处理、append-only 处理、验证命令和回滚方案。wrapper harness version 的事实源是 `.evozeus/wrapper.json`；Skill release 仍以 GitHub release 和 `CHANGELOG.md` 为准。
+迁移记录写入 `docs/wrapper-migrations/`，并记录 from/to wrapper version、planned files、`SKILL.md` 状态检查处理、append-only 处理、验证命令和回滚方案。wrapper harness version 的事实源是 `.evozeus_evoinfra/wrapper.json`；Skill release 仍以 GitHub release 和 `CHANGELOG.md` 为准。
 
 Design doc 至少回答：
 

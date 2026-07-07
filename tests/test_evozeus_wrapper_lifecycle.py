@@ -1,11 +1,14 @@
 import contextlib
 import io
+import json
 from datetime import date
 from pathlib import Path
 import tempfile
 import unittest
 
 from scripts.evozeus_wrapper_lifecycle import (
+    LEGACY_TARGET_WRAPPER_MANIFEST,
+    TARGET_WRAPPER_MANIFEST,
     build_wrapper_manifest,
     classify_pr_permission,
     classify_wrapper_upgrade,
@@ -15,6 +18,8 @@ from scripts.evozeus_wrapper_lifecycle import (
     diagnose_skill,
     diagnose_source_contract,
     load_wrapper_manifest,
+    migrate_target_infra_dir,
+    plan_feedback_audit,
     plan_harness_upgrade,
     path_kind,
     plan_reinstall,
@@ -23,6 +28,7 @@ from scripts.evozeus_wrapper_lifecycle import (
     skill_name_from_skill_md,
     stage_label,
     write_wrapper_manifest,
+    wrapper_manifest_status,
 )
 from scripts.evozeus_wrapper_preflight import (
     check_integration_contract,
@@ -132,6 +138,126 @@ class LifecycleBasicsTest(unittest.TestCase):
             entry = preflight_root_entry_path(target)
 
             self.assertEqual(str(entry.relative_to(target)), "skills/session-bootstrap/SKILL.md")
+
+    def test_write_wrapper_manifest_uses_target_evoinfra_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.6.0", [], []),
+            )
+
+            self.assertTrue((target / TARGET_WRAPPER_MANIFEST).is_file())
+            self.assertFalse((target / LEGACY_TARGET_WRAPPER_MANIFEST).exists())
+
+    def test_load_wrapper_manifest_falls_back_to_legacy_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            legacy_path = target / LEGACY_TARGET_WRAPPER_MANIFEST
+            legacy_path.parent.mkdir()
+            legacy_path.write_text(
+                '{"canonical_repo":"MetaInFLow/skill","wrapper_version":"v0.5.0"}\n',
+                encoding="utf-8",
+            )
+
+            manifest = load_wrapper_manifest(target)
+            status = wrapper_manifest_status(target)
+
+            self.assertEqual(manifest["canonical_repo"], "MetaInFLow/skill")
+            self.assertTrue(status["legacy_manifest_detected"])
+            self.assertTrue(status["migration_required"])
+            self.assertEqual(status["manifest_source"], "legacy")
+
+    def test_load_wrapper_manifest_rejects_conflicting_current_and_legacy_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            current_path = target / TARGET_WRAPPER_MANIFEST
+            legacy_path = target / LEGACY_TARGET_WRAPPER_MANIFEST
+            current_path.parent.mkdir()
+            legacy_path.parent.mkdir()
+            current_path.write_text(
+                '{"canonical_repo":"MetaInFLow/skill","wrapper_version":"v0.6.0"}\n',
+                encoding="utf-8",
+            )
+            legacy_path.write_text(
+                '{"canonical_repo":"MetaInFLow/skill","wrapper_version":"v0.5.0"}\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError):
+                load_wrapper_manifest(target)
+
+    def test_migrate_target_infra_dir_moves_legacy_files_and_rewrites_references(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text(
+                "Read `.evozeus/wrapper.json` and `.evozeus/feedback-policy.json`.\n",
+                encoding="utf-8",
+            )
+            legacy_dir = target / ".evozeus"
+            legacy_dir.mkdir()
+            (legacy_dir / "wrapper.json").write_text(
+                json.dumps(
+                    {
+                        "canonical_repo": "MetaInFLow/skill",
+                        "wrapper_version": "v0.5.0",
+                        "managed_files": [
+                            ".evozeus/wrapper.json",
+                            ".evozeus/feedback-policy.json",
+                            ".evozeus/audit-rule.md",
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (legacy_dir / "feedback-policy.json").write_text(
+                '{"audit_rule":".evozeus/audit-rule.md"}\n',
+                encoding="utf-8",
+            )
+            (legacy_dir / "audit-rule.md").write_text("# Rule\n", encoding="utf-8")
+
+            report = migrate_target_infra_dir(target, latest_version="v0.6.0")
+            manifest = load_wrapper_manifest(target)
+            skill_text = (target / "SKILL.md").read_text(encoding="utf-8")
+            policy = (target / ".evozeus_evoinfra" / "feedback-policy.json").read_text(encoding="utf-8")
+
+            self.assertIn("move .evozeus/ -> .evozeus_evoinfra/", report["actions"])
+            self.assertFalse((target / ".evozeus").exists())
+            self.assertTrue((target / TARGET_WRAPPER_MANIFEST).is_file())
+            self.assertEqual(manifest["wrapper_version"], "v0.6.0")
+            self.assertIn(".evozeus_evoinfra/wrapper.json", manifest["managed_files"])
+            self.assertIn(".evozeus_evoinfra/wrapper.json", skill_text)
+            self.assertIn(".evozeus_evoinfra/audit-rule.md", policy)
+
+    def test_plan_feedback_audit_captures_wrapper_defect(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.6.0", [], []),
+            )
+            policy_path = target / ".evozeus_evoinfra" / "feedback-policy.json"
+            policy_path.write_text(
+                '{"management_mode":"semi_managed","audit_rule":".evozeus_evoinfra/audit-rule.md"}\n',
+                encoding="utf-8",
+            )
+
+            report = plan_feedback_audit(
+                target=target,
+                user_input="这个 wrapper 没有自动 issue 回收，有问题",
+            )
+
+            self.assertTrue(report["should_capture"])
+            self.assertEqual(report["route"], "wrapper")
+            self.assertEqual(report["policy_path"], ".evozeus_evoinfra/feedback-policy.json")
+            self.assertIn("gh issue create --repo MetaInFLow/skill", report["issue_create_command"])
 
     def test_preflight_rejects_native_hook_mode_without_hook_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -726,6 +852,11 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertEqual(plan["upgrade_status"], "auto_pr")
             self.assertEqual(plan["current_version"], "v0.1.1")
             self.assertEqual(plan["latest_version"], "v0.2.0")
+            self.assertEqual(plan["target_infra_dir"], ".evozeus_evoinfra")
+            self.assertEqual(plan["legacy_infra_dir"], ".evozeus")
+            self.assertEqual(plan["manifest_path"], ".evozeus_evoinfra/wrapper.json")
+            self.assertFalse(plan["legacy_manifest_detected"])
+            self.assertFalse(plan["migration_required"])
             self.assertTrue(plan["append_only"])
             self.assertTrue(plan["status_check_first"])
             self.assertFalse(plan["requires_confirmation"])
@@ -738,7 +869,7 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertIn("SKILL.md EvoZeus-wrapper status check section (front matter prelude)", plan["planned_files"])
             self.assertIn("SKILL.md EvoZeus-wrapper section or migration note (append only)", plan["planned_files"])
             self.assertIn("docs/wrapper-migrations/README.md", plan["planned_files"])
-            self.assertIn(".evozeus/wrapper.json", plan["planned_files"])
+            self.assertIn(".evozeus_evoinfra/wrapper.json", plan["planned_files"])
 
     def test_plan_harness_upgrade_requires_repair_when_manifest_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -22,10 +22,10 @@ python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/sk
 - `SKILL.md` must start, after frontmatter, with `EvoZeus-wrapper 状态检查` before the target Skill's main chain.
 - Other `SKILL.md` changes are append-only: add the `EvoZeus-wrapper` section if missing, otherwise append a migration note.
 - Record every wrapper migration under `docs/wrapper-migrations/` with from/to wrapper version, planned files, validation, and rollback.
-- Update `.evozeus/wrapper.json` only after the migration plan is validated.
+- Update `.evozeus_evoinfra/wrapper.json` only after the migration plan is validated.
 - Major wrapper upgrades require explicit user confirmation.
 
 ## Stop Conditions
 
-- `.evozeus/wrapper.json` is missing and the user has not approved repair.
+- `.evozeus_evoinfra/wrapper.json` is missing and the user has not approved repair.
 - Managed files have local edits and no merge strategy exists.

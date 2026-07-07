@@ -36,7 +36,7 @@ Do not let copied runtime installs become another source of truth.
 
 For wrapper-managed targets, discover source state in this order:
 
-1. Read `.evozeus/wrapper.json`.
+1. Read `.evozeus_evoinfra/wrapper.json`.
 2. Check `~/.evozeus/.projects/OWNER/REPO`.
 3. Verify canonical repo origin and GitHub repo access.
 4. Inspect `.codex` / `.agents` runtime installs only as pointers.
@@ -71,7 +71,7 @@ For an existing target repo, preserve its current Skill / kit version:
 2. If GitHub has no release but `CHANGELOG.md` has a latest `vMAJOR.MINOR.PATCH` entry, create or verify that release before runtime use.
 3. If neither exists, stop and ask the owner to choose the current version.
 
-Wrapper harness version is separate and recorded in `.evozeus/wrapper.json`.
+Wrapper harness version is separate and recorded in `.evozeus_evoinfra/wrapper.json`.
 
 ## Lifecycle
 
@@ -189,6 +189,14 @@ Every behavior change must flow through:
 ```text
 feedback Issue -> design doc -> PR -> CHANGELOG -> release -> latest release check
 ```
+
+When feedback comes from a live user correction or dissatisfaction signal, first run:
+
+```bash
+python3 scripts/evozeus_wrapper.py loop audit --target /absolute/path/to/target-skill --user-input "<input>" --json
+```
+
+Use the returned route, severity, evidence boundary, and Issue draft before creating or recommending a Skill Feedback Issue.
 
 ### 8. Harness Upgrade
 

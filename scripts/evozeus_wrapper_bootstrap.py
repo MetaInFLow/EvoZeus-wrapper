@@ -19,7 +19,11 @@ EVOLUTION_SECTION_HEADING = "## 自进化方法"
 WRAPPER_SECTION_HEADING = "## EvoZeus-wrapper"
 LOCAL_PROJECTS_DIR = Path.home() / ".evozeus" / ".projects"
 INITIAL_VERSION = "v0.1.0"
-WRAPPER_VERSION = "v0.4.0"
+WRAPPER_VERSION = "v0.6.0"
+TARGET_EVOINFRA_DIR = ".evozeus_evoinfra"
+TARGET_WRAPPER_MANIFEST = f"{TARGET_EVOINFRA_DIR}/wrapper.json"
+TARGET_FEEDBACK_POLICY = f"{TARGET_EVOINFRA_DIR}/feedback-policy.json"
+TARGET_AUDIT_RULE = f"{TARGET_EVOINFRA_DIR}/audit-rule.md"
 
 
 def fail(message: str) -> None:
@@ -157,7 +161,7 @@ def build_evolution_section(replacements: dict[str, str]) -> str:
 
 源头发现顺序：
 
-1. 先读取本 repo 的 `.evozeus/wrapper.json`，以 `canonical_repo` 作为目标 repo。
+1. 先读取本 repo 的 `{TARGET_WRAPPER_MANIFEST}`，以 `canonical_repo` 作为目标 repo。
 2. 再检查 `~/.evozeus/.projects/{replacements["REPO_NAME"]}` 是否存在并指向 canonical repo。
 3. 验证 canonical repo 的 git origin / GitHub repo 可访问。
 4. 再检查 runtime install：`~/.codex/skills/<skill-name>`、`~/.agents/skills/<skill-name>`；它们只能是指向 canonical repo 的安装指针。
@@ -187,7 +191,7 @@ def build_status_section(replacements: dict[str, str]) -> str:
 
 执行本 Skill 主链路前，先完成状态检查；只有检查结果为 OK，才继续进入下方原 Skill 流程。
 
-本检查的运行时集成等级记录在 `.evozeus/wrapper.json` 的 `integration.mode`。只有 `native_host_hook` 表示宿主或插件 lifecycle hook 会自动触发；`prompt_runtime_check` 只是说明入口要求 agent 执行检查，不是真 hook；`hook start-check` 这类 wrapper CLI 命令只有被宿主自动调用时才算 runtime hook。
+本检查的运行时集成等级记录在 `{TARGET_WRAPPER_MANIFEST}` 的 `integration.mode`。只有 `native_host_hook` 表示宿主或插件 lifecycle hook 会自动触发；`prompt_runtime_check` 只是说明入口要求 agent 执行检查，不是真 hook；`hook start-check` 这类 wrapper CLI 命令只有被宿主自动调用时才算 runtime hook。
 
 1. Skill release 状态
    - 当前记录版本：`{replacements["CURRENT_VERSION"]}`
@@ -196,12 +200,12 @@ def build_status_section(replacements: dict[str, str]) -> str:
    - 如果本地版本领先 GitHub release：先完成 changelog、验证和 `vMAJOR.MINOR.PATCH` release，再把它当作稳定运行版本。
 2. Wrapper harness 状态
    - 当前 wrapper 版本：`{replacements["WRAPPER_VERSION"]}`
-   - 事实源：`.evozeus/wrapper.json`
+   - 事实源：`{TARGET_WRAPPER_MANIFEST}`
    - 检查命令：在 EvoZeus-wrapper repo 运行 `python3 scripts/evozeus_wrapper.py harness upgrade-check --target <this-skill-repo> --latest-version <wrapper-version> --json`
    - 如果 wrapper 落后：先运行 `harness upgrade --dry-run` 生成迁移方案，再按状态检查前置、其他 wrapper 内容 append-only 的规则迁移。
 3. Source contract 状态
    - 检查命令：`python3 scripts/evozeus_wrapper_preflight.py doctor --repo {replacements["REPO_NAME"]}`
-   - 如果 `.evozeus/.projects`、git origin 或 runtime install 不一致：先修复为同一个 canonical repo，再继续。
+   - 如果 `~/.evozeus/.projects`、git origin 或 runtime install 不一致：先修复为同一个 canonical repo，再继续。
 
 解决顺序：先修 source contract，再修 wrapper harness，最后处理 Skill release。全部 OK 后，再进入主链路。
 """
@@ -216,7 +220,7 @@ def build_wrapper_section(replacements: dict[str, str]) -> str:
 调用 wrapper 的场景：
 
 1. 本 Skill 需要 repo 化、adopt/repair wrapper harness、或确认 canonical source。
-2. `.evozeus/wrapper.json` 中的 wrapper harness version 落后于 EvoZeus-wrapper 最新版本。
+2. `{TARGET_WRAPPER_MANIFEST}` 中的 wrapper harness version 落后于 EvoZeus-wrapper 最新版本。
 3. `~/.evozeus/.projects/{replacements["REPO_NAME"]}`、`.codex` 或 `.agents` runtime install 疑似不是同一个 source of truth。
 4. 使用反馈需要从 Skill Feedback Issue 进入 design doc、PR、CHANGELOG、release 的自进化闭环。
 5. 目标 GitHub repo、release tag、GitHub Pages 或 preflight check 需要创建、诊断或修复。
@@ -234,10 +238,12 @@ Append-only 迁移规则：
 - wrapper 升级必须保留 frontmatter 后的状态检查；其他 `SKILL.md` wrapper 内容只能追加本区缺失内容或 migration note，不要重写原 Skill 业务段落。
 - 如果本区已存在，升级时追加 migration note，不改写旧文本。
 - 每次 wrapper 升级必须记录 from/to wrapper version、planned files、验证命令、回滚方案和是否需要人工 merge review。
-- wrapper version 事实源是 `.evozeus/wrapper.json` 的 `wrapper_version`；Skill release 仍以 GitHub release / `CHANGELOG.md` 为准。
+- wrapper version 事实源是 `{TARGET_WRAPPER_MANIFEST}` 的 `wrapper_version`；Skill release 仍以 GitHub release / `CHANGELOG.md` 为准。
 
 Wrapper harness version: `{replacements["WRAPPER_VERSION"]}`
-Wrapper manifest: `.evozeus/wrapper.json`
+Wrapper manifest: `{TARGET_WRAPPER_MANIFEST}`
+Feedback audit policy: `{TARGET_FEEDBACK_POLICY}`
+Feedback audit rule: `{TARGET_AUDIT_RULE}`
 Wrapper migration log: `docs/wrapper-migrations/`
 
 Runtime integration modes:

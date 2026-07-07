@@ -16,7 +16,7 @@ That made wrapped Skills look hook-backed even when no host hook was installed.
 
 ## Decision
 
-Record the actual integration level in `.evozeus/wrapper.json` and expose it in diagnosis and harness upgrade plans.
+Record the actual integration level in `.evozeus_evoinfra/wrapper.json` and expose it in diagnosis and harness upgrade plans.
 
 Supported modes:
 

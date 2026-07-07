@@ -14,7 +14,7 @@
 
 - Create `scripts/evozeus_wrapper_lifecycle.py`: pure-ish helper functions and dataclasses for environment diagnosis, skill diagnosis, manifest loading, symlink/reinstall planning, and wrapper upgrade comparison.
 - Create `scripts/evozeus_wrapper.py`: staged CLI with `env`, `skill`, `publish`, `loop`, and `harness` command groups.
-- Modify `scripts/evozeus_wrapper_bootstrap.py`: write `.evozeus/wrapper.json` and stop treating `.evozeus/.projects/OWNER/REPO` as a copied mirror in future paths.
+- Modify `scripts/evozeus_wrapper_bootstrap.py`: write `.evozeus_evoinfra/wrapper.json` and stop treating `~/.evozeus/.projects/OWNER/REPO` as a copied mirror in future paths.
 - Modify `scripts/evozeus_wrapper_preflight.py`: expose wrapper manifest/upgrade checks without weakening existing checks.
 - Create `tests/test_evozeus_wrapper_lifecycle.py`: unit tests with temporary directories and fake command runners.
 - Create sub-skill docs under `skills/*/SKILL.md`: router-facing stage instructions.
@@ -292,7 +292,7 @@ git commit -m "feat: add environment diagnosis stage"
 
 - [ ] **Step 1: Write failing tests for skill diagnosis**
 
-Add tests that create a temporary Skill folder with `SKILL.md`, a fake Codex install path, a fake `.evozeus/.projects` path, and verify the report includes `skill`, `repo`, `installs`, `harness`, and `publication`.
+Add tests that create a temporary Skill folder with `SKILL.md`, a fake Codex install path, a fake `~/.evozeus/.projects` path, and verify the report includes `skill`, `repo`, `installs`, `harness`, and `publication`.
 
 - [ ] **Step 2: Implement limited-path install scanning**
 
@@ -331,7 +331,7 @@ Rules:
 - Detect `SKILL.md`.
 - Infer Skill name from `SKILL.md` or target folder.
 - Inspect `~/.codex/skills/<skill-name>` and `~/.agents/skills/<skill-name>`.
-- Inspect `.evozeus/.projects/OWNER/REPO` when repo is present.
+- Inspect `~/.evozeus/.projects/OWNER/REPO` when repo is present.
 - Do not recurse through the entire home directory.
 - Detect harness state as `missing`, `partial`, or `complete` using required wrapper files from `evozeus_wrapper_preflight.py`.
 
@@ -374,7 +374,7 @@ git commit -m "feat: add target skill diagnosis stage"
 
 - [ ] **Step 1: Write failing tests for manifest read/write**
 
-Test that `.evozeus/wrapper.json` can be written and loaded with `wrapper_repo`, `wrapper_version`, `canonical_repo`, `managed_files`, and `install_links`.
+Test that `.evozeus_evoinfra/wrapper.json` can be written and loaded with `wrapper_repo`, `wrapper_version`, `canonical_repo`, `managed_files`, and `install_links`.
 
 - [ ] **Step 2: Implement manifest helpers**
 
@@ -411,7 +411,7 @@ def write_wrapper_manifest(target: Path, manifest: dict, force: bool = False) ->
 
 - [ ] **Step 3: Update bootstrap to write manifest**
 
-In `evozeus_wrapper_bootstrap.py`, import or mirror the manifest helper. After template copy and self-evolution injection, write `.evozeus/wrapper.json`. Use current initial wrapper version until repo release wiring exists.
+In `evozeus_wrapper_bootstrap.py`, import or mirror the manifest helper. After template copy and self-evolution injection, write `.evozeus_evoinfra/wrapper.json`. Use current initial wrapper version until repo release wiring exists.
 
 - [ ] **Step 4: Update target templates**
 
@@ -428,7 +428,7 @@ cp -R examples/minimal-static-skill "$tmp/minimal-static-skill"
 python3 scripts/evozeus_wrapper_bootstrap.py "$tmp/minimal-static-skill" --skill-name "Minimal Static Skill" --repo MetaInFLow/minimal-static-skill-dev --visibility private || true
 ```
 
-Expected: tests PASS. Bootstrap may stop if `gh` cannot verify repo state; if it runs, target contains `.evozeus/wrapper.json`.
+Expected: tests PASS. Bootstrap may stop if `gh` cannot verify repo state; if it runs, target contains `.evozeus_evoinfra/wrapper.json`.
 
 - [ ] **Step 6: Commit**
 
@@ -624,9 +624,9 @@ Document:
 
 - `scripts/evozeus_wrapper.py` staged CLI.
 - One physical repo invariant.
-- `.evozeus/.projects` as pointer, not copied mirror.
+- `~/.evozeus/.projects` as pointer, not copied mirror.
 - Runtime symlink installation.
-- `.evozeus/wrapper.json`.
+- `.evozeus_evoinfra/wrapper.json`.
 - Wrapper harness version axis.
 
 - [ ] **Step 4: Run docs checks**

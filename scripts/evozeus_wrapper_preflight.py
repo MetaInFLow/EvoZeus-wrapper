@@ -10,10 +10,21 @@ import sys
 from pathlib import Path
 
 
+GLOBAL_EVOZEUS_HOME = ".evozeus"
+GLOBAL_EVOZEUS_PROJECTS_DIR = ".projects"
+TARGET_EVOINFRA_DIR = ".evozeus_evoinfra"
+LEGACY_TARGET_EVOINFRA_DIR = ".evozeus"
+TARGET_WRAPPER_MANIFEST = f"{TARGET_EVOINFRA_DIR}/wrapper.json"
+LEGACY_TARGET_WRAPPER_MANIFEST = f"{LEGACY_TARGET_EVOINFRA_DIR}/wrapper.json"
+TARGET_FEEDBACK_POLICY = f"{TARGET_EVOINFRA_DIR}/feedback-policy.json"
+TARGET_AUDIT_RULE = f"{TARGET_EVOINFRA_DIR}/audit-rule.md"
+
 REQUIRED_FILES = [
     "CHANGELOG.md",
     "WRAPPER.md",
-    ".evozeus/wrapper.json",
+    TARGET_WRAPPER_MANIFEST,
+    TARGET_FEEDBACK_POLICY,
+    TARGET_AUDIT_RULE,
     "docs/index.md",
     "docs/_config.yml",
     "docs/design-doc-template.md",
@@ -25,6 +36,7 @@ REQUIRED_FILES = [
     ".github/workflows/evozeus-wrapper-preflight.yml",
     "scripts/evozeus_wrapper_preflight.py",
 ]
+MAINTAINER_REQUIRED_FILES = REQUIRED_FILES
 
 ISSUE_TERMS = [
     ["不满意", "unsatisfactory", "bad result"],
@@ -46,12 +58,13 @@ DESIGN_TERMS = [
 SKILL_EVOLUTION_TERMS = [
     ["EvoZeus-wrapper 状态检查"],
     ["当前记录版本", "当前 Skill 版本", "Skill release"],
-    ["解决顺序", "解决方法"],
+    ["解决顺序", "处理顺序", "解决方法"],
     ["自进化"],
     ["EvoZeus-wrapper"],
-    [".evozeus/wrapper.json"],
+    [TARGET_WRAPPER_MANIFEST],
+    ["runtime-only install"],
     ["source discovery", "源头发现", "source of truth", "事实源"],
-    ["~/.evozeus/.projects", ".evozeus/.projects"],
+    ["~/.evozeus/.projects"],
     ["version --repo"],
     ["Skill Feedback Issue", "feedback issue"],
     ["docs/designs", "design doc"],
@@ -73,6 +86,9 @@ PLACEHOLDER_PATTERNS = [
 
 VERSION_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+RUNTIME_REFERENCE_RE = re.compile(
+    r"(?P<path>(?:references|scripts|assets|templates|agents)/[A-Za-z0-9_.@()/+=,~ -]+)",
+)
 PLUGIN_MANIFEST_CANDIDATES = [
     ".codex-plugin/plugin.json",
     ".claude-plugin/plugin.json",
@@ -81,6 +97,18 @@ PLUGIN_MANIFEST_CANDIDATES = [
     ".opencode/INSTALL.md",
     "gemini-extension.json",
     "package.json",
+]
+WRAPPER_RUNTIME_SECTION_HEADINGS = {
+    "## EvoZeus-wrapper 状态检查",
+    "## 自进化方法",
+    "## EvoZeus-wrapper",
+}
+BLOCKING_STATUS_PHRASES = [
+    "Continue to the target Skill's main flow only after all three are OK.",
+    "全部 OK 后",
+    "只有检查结果为 OK",
+    "才继续进入目标 Skill 原本主链路",
+    "才继续进入下方原 Skill 流程",
 ]
 
 
@@ -155,17 +183,45 @@ def resolve_path(path: Path) -> str | None:
 
 
 def wrapper_manifest_path(target: Path) -> Path:
-    return target / ".evozeus" / "wrapper.json"
+    return target / TARGET_EVOINFRA_DIR / "wrapper.json"
+
+
+def legacy_wrapper_manifest_path(target: Path) -> Path:
+    return target / LEGACY_TARGET_EVOINFRA_DIR / "wrapper.json"
+
+
+def read_json_object(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        fail(f"invalid wrapper manifest JSON: {path}: {exc}")
+    if not isinstance(data, dict):
+        fail(f"wrapper manifest must be a JSON object: {path}")
+    return data
 
 
 def load_wrapper_manifest(target: Path) -> dict | None:
-    path = wrapper_manifest_path(target)
-    if not path.exists():
+    current_path = wrapper_manifest_path(target)
+    legacy_path = legacy_wrapper_manifest_path(target)
+    current_exists = current_path.exists()
+    legacy_exists = legacy_path.exists()
+    if not current_exists and not legacy_exists:
         return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        fail(f"invalid wrapper manifest JSON: {path}: {exc}")
+    current = read_json_object(current_path) if current_exists else None
+    legacy = read_json_object(legacy_path) if legacy_exists else None
+    if current_exists and legacy_exists and current != legacy:
+        fail(
+            "conflicting wrapper manifests: "
+            f"{TARGET_WRAPPER_MANIFEST} and {LEGACY_TARGET_WRAPPER_MANIFEST}"
+        )
+    if legacy_exists and not current_exists:
+        warn(f"legacy wrapper manifest detected; migrate to {TARGET_WRAPPER_MANIFEST}: {LEGACY_TARGET_WRAPPER_MANIFEST}")
+    return current or legacy
+
+
+def project_pointer_path(repo: str) -> Path:
+    owner, name = repo.split("/", 1)
+    return Path.home() / GLOBAL_EVOZEUS_HOME / GLOBAL_EVOZEUS_PROJECTS_DIR / owner / name
 
 
 def detected_hook_files(target: Path) -> list[str]:
@@ -206,11 +262,6 @@ def check_integration_contract(target: Path, manifest: dict | None) -> None:
         return
 
     fail(f"unknown integration.mode: {mode}")
-
-
-def project_pointer_path(repo: str) -> Path:
-    owner, name = repo.split("/", 1)
-    return Path.home() / ".evozeus" / ".projects" / owner / name
 
 
 def skill_name_from_skill_md(path: Path) -> str | None:
@@ -319,6 +370,7 @@ def check_status_prelude(skill_text: str, label: str = "SKILL.md") -> None:
     content = content_after_frontmatter(skill_text).lstrip()
     if not content.startswith("## EvoZeus-wrapper 状态检查"):
         fail(f"{label} must start with the EvoZeus-wrapper status check after frontmatter")
+    check_runtime_safe_status_prelude(skill_text, label)
 
 
 def root_entry_path(target: Path) -> Path:
@@ -336,20 +388,157 @@ def root_entry_path(target: Path) -> Path:
         return agents
     fail(
         "target must contain a detectable evolution instruction surface: "
-        "root SKILL.md, root AGENTS.md, or .evozeus/wrapper.json instruction_surface selected by diagnosis"
+        f"root SKILL.md, root AGENTS.md, or {TARGET_WRAPPER_MANIFEST} instruction_surface selected by diagnosis"
     )
 
 
 def check_agents_status_prelude(agents_text: str) -> None:
     content = content_after_frontmatter(agents_text).lstrip()
     if content.startswith("## EvoZeus-wrapper 状态检查"):
+        check_runtime_safe_status_prelude(agents_text, "AGENTS.md")
         return
     lines = content.splitlines()
     if lines and lines[0].startswith("# "):
         rest = "\n".join(lines[1:]).lstrip()
         if rest.startswith("## EvoZeus-wrapper 状态检查"):
+            check_runtime_safe_status_prelude(agents_text, "AGENTS.md")
             return
     fail("AGENTS.md must put the EvoZeus-wrapper status check before the main runtime instructions")
+
+
+def normalize_relative_path(raw: str) -> str:
+    cleaned = raw.strip().strip("`'\"").strip()
+    cleaned = cleaned.rstrip(".,;:)")
+    return cleaned.replace("\\", "/")
+
+
+def referenced_runtime_files(text: str) -> list[str]:
+    files: list[str] = []
+    for match in RUNTIME_REFERENCE_RE.finditer(text):
+        rel = normalize_relative_path(match.group("path"))
+        if rel and rel not in files:
+            files.append(rel)
+    return files
+
+
+def strip_wrapper_runtime_sections(text: str) -> str:
+    kept: list[str] = []
+    skipping = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped in WRAPPER_RUNTIME_SECTION_HEADINGS:
+            skipping = True
+            continue
+        if skipping and re.match(r"^#{1,6}\s+", stripped) and stripped not in WRAPPER_RUNTIME_SECTION_HEADINGS:
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def add_tree_files(target: Path, dirname: str, files: list[str]) -> None:
+    root = target / dirname
+    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            rel = str(path.relative_to(target))
+            if rel not in files:
+                files.append(rel)
+
+
+def discover_runtime_bundle(target: Path) -> dict:
+    manifest = load_wrapper_manifest(target)
+    runtime_bundle = manifest.get("runtime_bundle") if manifest else None
+    if isinstance(runtime_bundle, dict):
+        instruction_surface = str(runtime_bundle.get("instruction_surface") or "SKILL.md")
+        required = [
+            normalize_relative_path(path)
+            for path in runtime_bundle.get("required_files", [])
+            if isinstance(path, str) and path.strip()
+        ]
+        if instruction_surface not in required:
+            required.insert(0, instruction_surface)
+        optional = [
+            normalize_relative_path(path)
+            for path in runtime_bundle.get("optional_files", [])
+            if isinstance(path, str) and path.strip()
+        ]
+        return {
+            "instruction_surface": instruction_surface,
+            "required_files": list(dict.fromkeys(required)),
+            "optional_files": list(dict.fromkeys(optional)),
+            "external_tools": runtime_bundle.get("external_tools", []),
+            "source": f"{TARGET_WRAPPER_MANIFEST} runtime_bundle",
+        }
+
+    entry = root_entry_path(target)
+    instruction_surface = str(entry.relative_to(target))
+    required_files = [instruction_surface]
+    text = entry.read_text(encoding="utf-8", errors="ignore")
+    business_text = strip_wrapper_runtime_sections(text)
+    for rel in referenced_runtime_files(business_text):
+        if rel not in required_files:
+            required_files.append(rel)
+    for dirname in ["references", "assets", "templates"]:
+        if f"{dirname}/" in business_text:
+            add_tree_files(target, dirname, required_files)
+    if "scripts/" in business_text:
+        add_tree_files(target, "scripts", required_files)
+    for metadata in ["agents/openai.yaml"]:
+        if (target / metadata).is_file() and metadata not in required_files:
+            required_files.append(metadata)
+    return {
+        "instruction_surface": instruction_surface,
+        "required_files": required_files,
+        "optional_files": [],
+        "external_tools": [],
+        "source": "discovered_from_instruction_surface",
+    }
+
+
+def check_runtime_safe_status_prelude(text: str, label: str) -> None:
+    if "EvoZeus-wrapper 状态检查" not in text:
+        return
+    if "runtime-only install" not in text:
+        fail(f"{label} wrapper status prelude must include runtime-only install fallback language")
+    lowered = text.lower()
+    for phrase in BLOCKING_STATUS_PHRASES:
+        if phrase.lower() in lowered:
+            fail(
+                f"{label} wrapper status prelude contains blocking runtime language; "
+                f"remove it and keep the runtime-only install fallback: {phrase}"
+            )
+
+
+def check_runtime(args: argparse.Namespace) -> None:
+    target = Path(args.target).resolve()
+    bundle = discover_runtime_bundle(target)
+    missing = [path for path in bundle["required_files"] if not (target / path).is_file()]
+    if missing:
+        fail("missing required runtime files:\n" + "\n".join(f"- {path}" for path in missing))
+    entry = target / bundle["instruction_surface"]
+    check_runtime_safe_status_prelude(read_text(entry), bundle["instruction_surface"])
+    ok("runtime bundle is complete")
+
+
+def check_maintainer(args: argparse.Namespace) -> None:
+    target = Path(args.target).resolve()
+    missing = [path for path in MAINTAINER_REQUIRED_FILES if not (target / path).exists()]
+    if missing:
+        fail("missing required maintainer wrapper files:\n" + "\n".join(f"- {path}" for path in missing))
+    manifest = load_wrapper_manifest(target)
+    check_integration_contract(target, manifest)
+    entry = root_entry_path(target)
+    entry_text = read_text(entry)
+    label = str(entry.relative_to(target))
+    check_terms(entry_text, SKILL_EVOLUTION_TERMS, f"{label} self-evolution method")
+    if label == "AGENTS.md":
+        check_agents_status_prelude(entry_text)
+    else:
+        check_status_prelude(entry_text, label)
+    check_runtime(args)
+    ok("maintainer bundle contains required wrapper files")
 
 
 def check_doctor(args: argparse.Namespace) -> None:
@@ -411,7 +600,7 @@ def check_wrapper_managed_doctor(
 ) -> None:
     manifest_repo = manifest.get("canonical_repo")
     if not manifest_repo or not GITHUB_REPO_RE.match(manifest_repo):
-        fail(".evozeus/wrapper.json must contain canonical_repo in OWNER/REPO format")
+        fail(f"{TARGET_WRAPPER_MANIFEST} must contain canonical_repo in OWNER/REPO format")
     if requested_repo and requested_repo != manifest_repo:
         fail(f"--repo {requested_repo} does not match wrapper canonical_repo {manifest_repo}")
     ok(f"wrapper manifest detected: canonical_repo={manifest_repo}")
@@ -472,21 +661,7 @@ def check_wrapper_managed_doctor(
 
 
 def check_structure(args: argparse.Namespace) -> None:
-    target = Path(args.target).resolve()
-    missing = [path for path in REQUIRED_FILES if not (target / path).exists()]
-    if missing:
-        fail("missing required wrapper files:\n" + "\n".join(f"- {path}" for path in missing))
-    manifest = load_wrapper_manifest(target)
-    check_integration_contract(target, manifest)
-    entry = root_entry_path(target)
-    entry_text = read_text(entry)
-    label = str(entry.relative_to(target))
-    check_terms(entry_text, SKILL_EVOLUTION_TERMS, f"{label} self-evolution method")
-    if label == "AGENTS.md":
-        check_agents_status_prelude(entry_text)
-    else:
-        check_status_prelude(entry_text, label)
-    ok("structure contains required wrapper files")
+    check_maintainer(args)
 
 
 def check_issue(args: argparse.Namespace) -> None:
@@ -637,6 +812,12 @@ def main() -> int:
     doctor.add_argument("--repo", help="GitHub repo in OWNER/REPO format. Defaults to origin remote or discovered candidate.")
     doctor.add_argument("--allow-missing-repo", action="store_true", help="Allow --repo to be absent on GitHub when bootstrapping a new repo.")
 
+    runtime = sub.add_parser("runtime", help="Check runtime-copy runnable Skill files.")
+    runtime.add_argument("--target", default=".", help="Target Skill runtime or wrapped repo path.")
+
+    maintainer = sub.add_parser("maintainer", help="Check maintainer wrapper governance files.")
+    maintainer.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
+
     structure = sub.add_parser("structure", help="Check required wrapper files.")
     structure.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
 
@@ -664,6 +845,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "doctor":
         check_doctor(args)
+    elif args.command == "runtime":
+        check_runtime(args)
+    elif args.command == "maintainer":
+        check_maintainer(args)
     elif args.command == "structure":
         check_structure(args)
     elif args.command == "issue":

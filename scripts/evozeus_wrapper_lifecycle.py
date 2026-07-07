@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import hashlib
 import json
+import shutil
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -18,9 +19,22 @@ STAGE_LABELS = {
     "loop": "[5/5] Continuous Evolution Loop",
 }
 
+GLOBAL_EVOZEUS_HOME = ".evozeus"
+GLOBAL_EVOZEUS_PROJECTS_DIR = ".projects"
+TARGET_EVOINFRA_DIR = ".evozeus_evoinfra"
+LEGACY_TARGET_EVOINFRA_DIR = ".evozeus"
+TARGET_WRAPPER_MANIFEST = f"{TARGET_EVOINFRA_DIR}/wrapper.json"
+LEGACY_TARGET_WRAPPER_MANIFEST = f"{LEGACY_TARGET_EVOINFRA_DIR}/wrapper.json"
+TARGET_FEEDBACK_POLICY = f"{TARGET_EVOINFRA_DIR}/feedback-policy.json"
+TARGET_AUDIT_RULE = f"{TARGET_EVOINFRA_DIR}/audit-rule.md"
+LEGACY_TARGET_FEEDBACK_POLICY = f"{LEGACY_TARGET_EVOINFRA_DIR}/feedback-policy.json"
+LEGACY_TARGET_AUDIT_RULE = f"{LEGACY_TARGET_EVOINFRA_DIR}/audit-rule.md"
+
 REQUIRED_WRAPPER_FILES = [
     "CHANGELOG.md",
     "WRAPPER.md",
+    TARGET_FEEDBACK_POLICY,
+    TARGET_AUDIT_RULE,
     "docs/index.md",
     "docs/_config.yml",
     "docs/design-doc-template.md",
@@ -35,6 +49,8 @@ REQUIRED_WRAPPER_FILES = [
 
 WRAPPER_MANAGED_FILES = [
     "WRAPPER.md",
+    TARGET_FEEDBACK_POLICY,
+    TARGET_AUDIT_RULE,
     "docs/index.md",
     "docs/_config.yml",
     "docs/design-doc-template.md",
@@ -90,6 +106,53 @@ CONTROL_SKILL_TEXT_TERMS = (
     "加载",
     "路由",
     "控制",
+)
+FEEDBACK_CAPTURE_TERMS = (
+    "不满意",
+    "不对",
+    "错了",
+    "有问题",
+    "问题",
+    "缺陷",
+    "为什么",
+    "没有",
+    "没",
+    "应该",
+    "期望",
+    "纠正",
+    "wrong",
+    "bug",
+    "issue",
+    "missing",
+    "broken",
+    "defect",
+)
+WRAPPER_ROUTE_TERMS = (
+    "evozeus",
+    "wrapper",
+    "harness",
+    "hook",
+    "release",
+    "版本",
+    "发布",
+    "issue",
+    "回收",
+    "检测",
+    "skill",
+    "preflight",
+)
+TARGET_ROUTE_TERMS = (
+    "大兴",
+    "飞书",
+    "feishu",
+    "base",
+    "多维表",
+    "需求池",
+    "子任务",
+    "排期",
+    "状态",
+    "验收",
+    "进度",
 )
 
 
@@ -291,9 +354,9 @@ def command_status(args: list[str], runner=run_command) -> str:
 
 def diagnose_environment(home: Path = Path.home(), runner=run_command) -> dict[str, Any]:
     home = home.expanduser().resolve()
-    evozeus_home = home / ".evozeus"
+    evozeus_home = home / GLOBAL_EVOZEUS_HOME
     runtime_dir = evozeus_home / "runtime"
-    projects_dir = evozeus_home / ".projects"
+    projects_dir = evozeus_home / GLOBAL_EVOZEUS_PROJECTS_DIR
 
     git_status = command_status(["git", "--version"], runner)
     gh_status = command_status(["gh", "--version"], runner)
@@ -332,7 +395,7 @@ def repo_projects_pointer(home: Path, repo: str | None) -> Path | None:
     if not repo or "/" not in repo:
         return None
     owner, name = repo.split("/", 1)
-    return home / ".evozeus" / ".projects" / owner / name
+    return home / GLOBAL_EVOZEUS_HOME / GLOBAL_EVOZEUS_PROJECTS_DIR / owner / name
 
 
 def resolve_path(path: Path) -> str | None:
@@ -373,11 +436,17 @@ def describe_install_path(path: Path, target: Path) -> dict[str, Any]:
 
 
 def diagnose_harness_state(target: Path) -> dict[str, Any]:
-    present = [rel for rel in REQUIRED_WRAPPER_FILES if (target / rel).exists()]
-    missing = [rel for rel in REQUIRED_WRAPPER_FILES if not (target / rel).exists()]
+    manifest_status = wrapper_manifest_status(target)
+    required_files = REQUIRED_WRAPPER_FILES + [TARGET_WRAPPER_MANIFEST]
+    present = [rel for rel in required_files if (target / rel).exists()]
+    missing = [rel for rel in required_files if not (target / rel).exists()]
+    if manifest_status["legacy_manifest_detected"] and not manifest_status["current_manifest_detected"]:
+        present.append(LEGACY_TARGET_WRAPPER_MANIFEST)
     manifest = load_wrapper_manifest(target)
     if not present:
         state = "missing"
+    elif manifest_status["migration_required"]:
+        state = "legacy_compatible"
     elif not missing:
         state = "complete"
     else:
@@ -387,6 +456,7 @@ def diagnose_harness_state(target: Path) -> dict[str, Any]:
         "present_files": present,
         "missing_files": missing,
         "wrapper_version": manifest.get("wrapper_version") if manifest else None,
+        **manifest_status,
     }
 
 
@@ -720,7 +790,7 @@ def collect_evolution_surface_facts(target: Path, skill_inventory: list[dict[str
 
 
 def assess_component_gaps(target: Path, evolution_surface: dict[str, Any]) -> dict[str, Any]:
-    required = REQUIRED_WRAPPER_FILES + [".evozeus/wrapper.json"]
+    required = REQUIRED_WRAPPER_FILES + [TARGET_WRAPPER_MANIFEST]
     missing_files = [rel for rel in required if not (target / rel).exists()]
     present_files = [rel for rel in required if (target / rel).exists()]
     missing_concepts = []
@@ -731,7 +801,7 @@ def assess_component_gaps(target: Path, evolution_surface: dict[str, Any]) -> di
         missing_concepts.append(f"{selected['path']} EvoZeus-wrapper status check")
     if not (target / "CHANGELOG.md").exists():
         missing_concepts.append("Skill or kit release changelog")
-    if not (target / ".evozeus" / "wrapper.json").exists():
+    if not wrapper_manifest_path(target).exists():
         missing_concepts.append("wrapper manifest")
 
     return {
@@ -903,14 +973,76 @@ def diagnose_skill(
 
 
 def wrapper_manifest_path(target: Path) -> Path:
-    return target / ".evozeus" / "wrapper.json"
+    return target / TARGET_EVOINFRA_DIR / "wrapper.json"
+
+
+def legacy_wrapper_manifest_path(target: Path) -> Path:
+    return target / LEGACY_TARGET_EVOINFRA_DIR / "wrapper.json"
+
+
+def _read_manifest_json(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid wrapper manifest JSON: {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"wrapper manifest must be a JSON object: {path}")
+    return data
+
+
+def wrapper_manifest_status(target: Path) -> dict[str, Any]:
+    current_path = wrapper_manifest_path(target)
+    legacy_path = legacy_wrapper_manifest_path(target)
+    current_exists = current_path.exists()
+    legacy_exists = legacy_path.exists()
+    conflict = False
+    active_path: Path | None = None
+    source = "missing"
+    current_manifest: dict[str, Any] | None = None
+    legacy_manifest: dict[str, Any] | None = None
+
+    if current_exists:
+        current_manifest = _read_manifest_json(current_path)
+        active_path = current_path
+        source = "current"
+    if legacy_exists:
+        legacy_manifest = _read_manifest_json(legacy_path)
+        if not current_exists:
+            active_path = legacy_path
+            source = "legacy"
+        elif current_manifest != legacy_manifest:
+            conflict = True
+            source = "conflict"
+        else:
+            source = "current_with_duplicate_legacy"
+
+    return {
+        "target_infra_dir": TARGET_EVOINFRA_DIR,
+        "legacy_infra_dir": LEGACY_TARGET_EVOINFRA_DIR,
+        "manifest_path": TARGET_WRAPPER_MANIFEST,
+        "legacy_manifest_path": LEGACY_TARGET_WRAPPER_MANIFEST,
+        "active_manifest_path": str(active_path) if active_path else None,
+        "active_manifest_relpath": str(active_path.relative_to(target)) if active_path else None,
+        "manifest_source": source,
+        "current_manifest_detected": current_exists,
+        "legacy_manifest_detected": legacy_exists,
+        "migration_required": legacy_exists and not current_exists,
+        "duplicate_legacy_detected": legacy_exists and current_exists and not conflict,
+        "conflict": conflict,
+    }
 
 
 def load_wrapper_manifest(target: Path) -> dict[str, Any] | None:
-    path = wrapper_manifest_path(target)
-    if not path.exists():
+    status = wrapper_manifest_status(target)
+    if status["conflict"]:
+        raise ValueError(
+            "conflicting wrapper manifests: "
+            f"{TARGET_WRAPPER_MANIFEST} and {LEGACY_TARGET_WRAPPER_MANIFEST}"
+        )
+    active = status["active_manifest_path"]
+    if not active:
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return _read_manifest_json(Path(active))
 
 
 def diagnose_source_contract(
@@ -923,7 +1055,8 @@ def diagnose_source_contract(
 ) -> dict[str, Any]:
     manifest = load_wrapper_manifest(target)
     discovery_order = [
-        ".evozeus/wrapper.json",
+        TARGET_WRAPPER_MANIFEST,
+        f"{LEGACY_TARGET_WRAPPER_MANIFEST} (legacy fallback only)",
         "~/.evozeus/.projects/OWNER/REPO",
         "canonical repo git origin / GitHub repo",
         "~/.codex/skills/<skill-name> and ~/.agents/skills/<skill-name>",
@@ -946,7 +1079,7 @@ def diagnose_source_contract(
     warnings: list[str] = []
     manifest_repo = manifest.get("canonical_repo")
     if not manifest_repo:
-        errors.append(".evozeus/wrapper.json is missing canonical_repo")
+        errors.append(f"{TARGET_WRAPPER_MANIFEST} is missing canonical_repo")
     if requested_repo and manifest_repo and requested_repo != manifest_repo:
         errors.append(f"--repo {requested_repo} does not match wrapper canonical_repo {manifest_repo}")
 
@@ -1003,6 +1136,11 @@ def diagnose_source_contract(
         "managed": True,
         "status": status,
         "discovery_order": discovery_order,
+        "target_infra_dir": TARGET_EVOINFRA_DIR,
+        "legacy_infra_dir": LEGACY_TARGET_EVOINFRA_DIR,
+        "manifest_path": TARGET_WRAPPER_MANIFEST,
+        "legacy_manifest_detected": wrapper_manifest_status(target)["legacy_manifest_detected"],
+        "migration_required": wrapper_manifest_status(target)["migration_required"],
         "errors": errors,
         "warnings": warnings,
         "canonical_repo": canonical_repo,
@@ -1025,6 +1163,8 @@ def build_wrapper_manifest(
         "wrapper_repo": WRAPPER_REPO,
         "wrapper_version": wrapper_version,
         "applied_at": date.today().isoformat(),
+        "target_infra_dir": TARGET_EVOINFRA_DIR,
+        "legacy_infra_dir": LEGACY_TARGET_EVOINFRA_DIR,
         "canonical_repo": repo,
         "managed_files": managed_files,
         "install_links": install_links,
@@ -1049,6 +1189,282 @@ def write_wrapper_manifest(target: Path, manifest: dict[str, Any], force: bool =
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return f"write {path}"
+
+
+TARGET_INFRA_PATH_REPLACEMENTS = (
+    (LEGACY_TARGET_WRAPPER_MANIFEST, TARGET_WRAPPER_MANIFEST),
+    (LEGACY_TARGET_FEEDBACK_POLICY, TARGET_FEEDBACK_POLICY),
+    (LEGACY_TARGET_AUDIT_RULE, TARGET_AUDIT_RULE),
+    ("`.evozeus/.projects", "`~/.evozeus/.projects"),
+)
+
+
+def rewrite_target_infra_string(value: str) -> str:
+    updated = value
+    for old, new in TARGET_INFRA_PATH_REPLACEMENTS:
+        updated = updated.replace(old, new)
+    return updated
+
+
+def rewrite_target_infra_json(value: Any) -> Any:
+    if isinstance(value, str):
+        return rewrite_target_infra_string(value)
+    if isinstance(value, list):
+        return [rewrite_target_infra_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: rewrite_target_infra_json(item) for key, item in value.items()}
+    return value
+
+
+def rewrite_target_infra_json_file(path: Path) -> bool:
+    data = _read_manifest_json(path) if path.name == "wrapper.json" else json.loads(path.read_text(encoding="utf-8"))
+    updated = rewrite_target_infra_json(data)
+    if updated == data:
+        return False
+    path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def target_infra_text_files(target: Path) -> list[Path]:
+    files: list[Path] = []
+    direct = ["SKILL.md", "WRAPPER.md", "README.md", "CHANGELOG.md"]
+    for rel in direct:
+        path = target / rel
+        if path.is_file():
+            files.append(path)
+    for dirname, pattern in [
+        ("docs", "*.md"),
+        ("scripts", "*.py"),
+        (".github", "*.yml"),
+        (".github", "*.yaml"),
+        (".github", "*.md"),
+        ("skills", "SKILL.md"),
+        ("templates", "*.md"),
+    ]:
+        root = target / dirname
+        if root.is_dir():
+            files.extend(path for path in sorted(root.rglob(pattern)) if path.is_file())
+    return list(dict.fromkeys(files))
+
+
+def rewrite_target_infra_text_file(path: Path) -> bool:
+    text = path.read_text(encoding="utf-8")
+    updated = rewrite_target_infra_string(text)
+    if updated == text:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    return True
+
+
+def feedback_policy_path(target: Path) -> Path:
+    current = target / TARGET_FEEDBACK_POLICY
+    if current.exists():
+        return current
+    return target / LEGACY_TARGET_FEEDBACK_POLICY
+
+
+def load_feedback_policy(target: Path) -> dict[str, Any]:
+    path = feedback_policy_path(target)
+    if not path.exists():
+        return {
+            "management_mode": "manual",
+            "strictness": "medium",
+            "audit_rule": TARGET_AUDIT_RULE,
+            "routing": {},
+        }
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+def contains_any_term(text: str, terms: tuple[str, ...]) -> bool:
+    normalized = text.lower()
+    return any(term.lower() in normalized for term in terms)
+
+
+def infer_feedback_route(user_input: str) -> str:
+    wrapper = contains_any_term(user_input, WRAPPER_ROUTE_TERMS)
+    target = contains_any_term(user_input, TARGET_ROUTE_TERMS)
+    if wrapper and target:
+        return "both"
+    if wrapper:
+        return "wrapper"
+    if target:
+        return "target_skill"
+    return "target_skill"
+
+
+def feedback_issue_title(route: str, user_input: str) -> str:
+    compact = " ".join(user_input.strip().split())
+    if len(compact) > 48:
+        compact = compact[:45].rstrip() + "..."
+    prefix = {
+        "wrapper": "Wrapper feedback",
+        "target_skill": "Skill feedback",
+        "both": "Skill + wrapper feedback",
+    }.get(route, "Skill feedback")
+    return f"{prefix}: {compact or 'unspecified issue'}"
+
+
+def feedback_issue_body(
+    *,
+    route: str,
+    reason: str,
+    severity: str,
+    user_input: str,
+    context: str | None,
+) -> str:
+    evidence = context.strip() if context else user_input.strip()
+    return "\n".join(
+        [
+            "## Feedback",
+            "",
+            user_input.strip() or "(empty input)",
+            "",
+            "## Expected Result",
+            "",
+            "Capture the reusable rule or wrapper defect so future Skill runs do not repeat it.",
+            "",
+            "## Reproduction / Scenario",
+            "",
+            evidence or "(no additional context provided)",
+            "",
+            "## Evidence Boundary",
+            "",
+            "Use only this redacted summary. Do not include raw private session text, customer secrets, credentials, or unreleased commercial context.",
+            "",
+            "## Routing",
+            "",
+            f"- Route: `{route}`",
+            f"- Severity: `{severity}`",
+            f"- Reason: {reason}",
+            "",
+        ]
+    )
+
+
+def plan_feedback_audit(target: Path, user_input: str, context: str | None = None) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    policy = load_feedback_policy(target)
+    manifest = load_wrapper_manifest(target)
+    should_capture = contains_any_term(user_input, FEEDBACK_CAPTURE_TERMS)
+    route = infer_feedback_route(user_input)
+    severity = "high" if route == "both" else "medium" if route == "wrapper" else "low"
+    reason = (
+        "user reported a reusable wrapper/Skill behavior gap"
+        if should_capture
+        else "no reusable correction, dissatisfaction, or mechanism defect detected"
+    )
+    canonical_repo = (manifest or {}).get("canonical_repo")
+    title = feedback_issue_title(route, user_input)
+    body = feedback_issue_body(
+        route=route,
+        reason=reason,
+        severity=severity,
+        user_input=user_input,
+        context=context,
+    )
+    issue_command = None
+    if should_capture and canonical_repo:
+        issue_command = (
+            "gh issue create "
+            f"--repo {canonical_repo} "
+            f"--title {json.dumps(title, ensure_ascii=False)} "
+            "--body-file <redacted-feedback.md>"
+        )
+
+    return {
+        "stage": "continuous_evolution_loop",
+        "flow": "feedback_audit",
+        "writes": False,
+        "target": str(target),
+        "policy_path": str(feedback_policy_path(target).relative_to(target))
+        if feedback_policy_path(target).exists()
+        else None,
+        "audit_rule_path": policy.get("audit_rule") or TARGET_AUDIT_RULE,
+        "management_mode": policy.get("management_mode", "manual"),
+        "canonical_repo": canonical_repo,
+        "should_capture": should_capture,
+        "reason": reason,
+        "route": route,
+        "severity": severity,
+        "evidence_boundary": (
+            "redacted summary only; no raw private session, customer secrets, credentials, or unreleased commercial context"
+        ),
+        "issue_title": title if should_capture else None,
+        "issue_body": body if should_capture else None,
+        "issue_create_command": issue_command,
+        "next_action": "create_or_confirm_feedback_issue" if should_capture else "no_capture_needed",
+    }
+
+
+def migrate_target_infra_dir(
+    target: Path,
+    latest_version: str | None = None,
+    remove_duplicate_legacy: bool = False,
+) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    before = wrapper_manifest_status(target)
+    if before["conflict"]:
+        raise ValueError(
+            "cannot migrate because current and legacy wrapper manifests conflict: "
+            f"{TARGET_WRAPPER_MANIFEST} vs {LEGACY_TARGET_WRAPPER_MANIFEST}"
+        )
+
+    current_dir = target / TARGET_EVOINFRA_DIR
+    legacy_dir = target / LEGACY_TARGET_EVOINFRA_DIR
+    actions: list[str] = []
+
+    if legacy_dir.exists() and not current_dir.exists():
+        legacy_dir.rename(current_dir)
+        actions.append(f"move {LEGACY_TARGET_EVOINFRA_DIR}/ -> {TARGET_EVOINFRA_DIR}/")
+    elif legacy_dir.exists() and current_dir.exists() and remove_duplicate_legacy:
+        shutil.rmtree(legacy_dir)
+        actions.append(f"remove duplicate legacy {LEGACY_TARGET_EVOINFRA_DIR}/")
+
+    changed_files: list[str] = []
+    if current_dir.is_dir():
+        for path in sorted(current_dir.rglob("*.json")):
+            if rewrite_target_infra_json_file(path):
+                changed_files.append(str(path.relative_to(target)))
+
+    manifest_path = wrapper_manifest_path(target)
+    if manifest_path.exists():
+        manifest = _read_manifest_json(manifest_path)
+        updated_manifest = rewrite_target_infra_json(manifest)
+        updated_manifest["target_infra_dir"] = TARGET_EVOINFRA_DIR
+        updated_manifest["legacy_infra_dir"] = LEGACY_TARGET_EVOINFRA_DIR
+        if latest_version:
+            updated_manifest["wrapper_version"] = latest_version
+            updated_manifest["applied_at"] = date.today().isoformat()
+        if updated_manifest != manifest:
+            manifest_path.write_text(
+                json.dumps(updated_manifest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            rel = str(manifest_path.relative_to(target))
+            if rel not in changed_files:
+                changed_files.append(rel)
+
+    for path in target_infra_text_files(target):
+        if rewrite_target_infra_text_file(path):
+            changed_files.append(str(path.relative_to(target)))
+
+    after = wrapper_manifest_status(target)
+    return {
+        "stage": "harness_upgrade",
+        "target": str(target),
+        "writes": True,
+        "target_infra_dir": TARGET_EVOINFRA_DIR,
+        "legacy_infra_dir": LEGACY_TARGET_EVOINFRA_DIR,
+        "manifest_path": TARGET_WRAPPER_MANIFEST,
+        "legacy_manifest_detected": after["legacy_manifest_detected"],
+        "migration_required": after["migration_required"],
+        "manifest_source": after["manifest_source"],
+        "from_manifest_source": before["manifest_source"],
+        "latest_version": latest_version,
+        "actions": actions,
+        "changed_files": list(dict.fromkeys(changed_files)),
+    }
 
 
 def plan_transform_action(harness_state: str, repo_exists: bool | None) -> str:
@@ -1172,6 +1588,7 @@ def plan_harness_upgrade(
 ) -> dict[str, Any]:
     target = target.expanduser().resolve()
     manifest = load_wrapper_manifest(target)
+    manifest_status = wrapper_manifest_status(target)
     architecture = detect_target_architecture(target)
     manifest_surface = manifest.get("instruction_surface") if manifest else None
     instruction_surface = instruction_surface or manifest_surface or architecture["root_entry"] or "SKILL.md"
@@ -1201,7 +1618,7 @@ def plan_harness_upgrade(
             [
                 root_status_section,
                 root_wrapper_section,
-                ".evozeus/wrapper.json",
+                TARGET_WRAPPER_MANIFEST,
                 WRAPPER_MIGRATION_README,
             ]
         )
@@ -1246,6 +1663,12 @@ def plan_harness_upgrade(
         "stage": "harness_upgrade",
         "target": str(target),
         "writes": False,
+        "target_infra_dir": TARGET_EVOINFRA_DIR,
+        "legacy_infra_dir": LEGACY_TARGET_EVOINFRA_DIR,
+        "manifest_path": TARGET_WRAPPER_MANIFEST,
+        "legacy_manifest_detected": manifest_status["legacy_manifest_detected"],
+        "migration_required": manifest_status["migration_required"],
+        "manifest_source": manifest_status["manifest_source"],
         "current_version": current,
         "latest_version": latest,
         "managed_dirty": managed_dirty,
@@ -1272,17 +1695,18 @@ def plan_harness_upgrade(
             "to_wrapper_version": latest,
             "doc_path": migration_doc,
             "log_dir": "docs/wrapper-migrations",
-            "records_wrapper_version_in": ".evozeus/wrapper.json",
+            "records_wrapper_version_in": TARGET_WRAPPER_MANIFEST,
         },
         "planned_files": deduped_planned_files,
         "migration_steps": [
-            "Read .evozeus/wrapper.json and confirm canonical_repo before touching runtime installs.",
+            f"Read {TARGET_WRAPPER_MANIFEST} and confirm canonical_repo before touching runtime installs.",
+            f"If only {LEGACY_TARGET_WRAPPER_MANIFEST} exists, migrate it to {TARGET_WRAPPER_MANIFEST}.",
             "Diff wrapper-managed files; if they contain local edits, stop for merge review.",
             "Copy or merge wrapper-managed files only.",
             f"Add the EvoZeus-wrapper status check in {instruction_surface} before the target main chain if missing.",
             f"Append the EvoZeus-wrapper section in {instruction_surface} if missing; otherwise append a migration note instead of editing old text.",
             "Write a migration record under docs/wrapper-migrations/ with from/to wrapper versions, validation, and rollback.",
-            "Update .evozeus/wrapper.json wrapper_version after validation passes.",
+            f"Update {TARGET_WRAPPER_MANIFEST} wrapper_version after validation passes.",
         ],
         "validation": validation,
     }

@@ -25,11 +25,11 @@ environment diagnosis
 | 阶段 | 文件和能力 |
 | --- | --- |
 | Before | 本地 Skill 文件夹，至少包含 `SKILL.md` |
-| After | canonical GitHub repo、GitHub Pages、`.evozeus/wrapper.json`、`CHANGELOG.md`、Issue template、PR template、design doc template、preflight checker、runtime symlink |
+| After | canonical GitHub repo、GitHub Pages、`.evozeus_evoinfra/wrapper.json`、`CHANGELOG.md`、Issue template、PR template、design doc template、preflight checker、runtime symlink |
 
 ## Runtime Integration Contract
 
-Wrapper 不能把所有启动检查都叫作 hook。`.evozeus/wrapper.json` 必须记录当前事实级别：
+Wrapper 不能把所有启动检查都叫作 hook。`.evozeus_evoinfra/wrapper.json` 必须记录当前事实级别：
 
 | mode | 含义 |
 | --- | --- |
@@ -59,7 +59,7 @@ Preflight 必须阻止能力夸大：如果 manifest 声称 `integration.mode=na
 
 wrapper-managed Skill 的源头发现顺序固定，不允许跳过：
 
-1. 读取目标 repo 的 `.evozeus/wrapper.json`。
+1. 读取目标 repo 的 `.evozeus_evoinfra/wrapper.json`。
 2. 用 manifest 的 `canonical_repo` 推导 `~/.evozeus/.projects/OWNER/REPO`。
 3. 检查该 project pointer 必须是 symlink，并 resolve 到 canonical repo。
 4. 验证 canonical repo 的 git origin 与 `canonical_repo` 一致，且 GitHub repo 可访问。
@@ -76,7 +76,7 @@ wrapper-managed Skill 的源头发现顺序固定，不允许跳过：
 | 使用中结果不满意怎么反馈？ | `.github/ISSUE_TEMPLATE/skill-feedback.yml` |
 | 修改 Skill 前怎么想清楚？ | `docs/design-doc-template.md` + `docs/designs/*.md` |
 | 每次迭代怎么留下记录？ | `CHANGELOG.md` |
-| wrapper harness 怎么迁移？ | `docs/wrapper-migrations/` + `.evozeus/wrapper.json` |
+| wrapper harness 怎么迁移？ | `docs/wrapper-migrations/` + `.evozeus_evoinfra/wrapper.json` |
 | 上传前怎么挡住低质量变更？ | `scripts/evozeus_wrapper_preflight.py` + GitHub Actions |
 | release 是否有说明？ | `CHANGELOG.md` tag entry + GitHub release notes |
 
@@ -104,7 +104,7 @@ wrapper-managed Skill 的源头发现顺序固定，不允许跳过：
 
 `scripts/evozeus_wrapper_preflight.py` 至少支持五类检查：
 
-- `doctor`：本地依赖与源头检查。必须确认 `git`、`gh`、`gh auth status`。当 `.evozeus/wrapper.json` 存在时，必须先验证 wrapper manifest、`~/.evozeus/.projects/OWNER/REPO`、canonical origin 和 runtime pointer；只有 wrapper state 不存在时，才验证目标 repo/origin 或进入候选发现。bootstrap 阶段目标 repo 尚未创建时，允许 `--allow-missing-repo`，但后续发布前必须去掉该豁免。
+- `doctor`：本地依赖与源头检查。必须确认 `git`、`gh`、`gh auth status`。当 `.evozeus_evoinfra/wrapper.json` 存在时，必须先验证 wrapper manifest、`~/.evozeus/.projects/OWNER/REPO`、canonical origin 和 runtime pointer；只有 wrapper state 不存在时，才验证目标 repo/origin 或进入候选发现。bootstrap 阶段目标 repo 尚未创建时，允许 `--allow-missing-repo`，但后续发布前必须去掉该豁免。
 - `structure`：目标 repo 是否包含驾驶舱必需文件。
 - `issue`：Issue 内容是否满足反馈模板字段。
 - `pr`：PR 是否有 design doc，且 changelog 有记录。
@@ -120,12 +120,13 @@ python3 scripts/evozeus_wrapper.py skill diagnose --target /absolute/path/to/ski
 python3 scripts/evozeus_wrapper.py skill transform --mode bootstrap --target /absolute/path/to/skill --repo OWNER/REPO --visibility private --dry-run --json
 python3 scripts/evozeus_wrapper.py publish reinstall --skill-name skill-name --canonical-path /absolute/path/to/repo --target codex --dry-run --json
 python3 scripts/evozeus_wrapper.py loop lesson --dry-run --json
+python3 scripts/evozeus_wrapper.py loop audit --target /absolute/path/to/skill --user-input "<input>" --json
 python3 scripts/evozeus_wrapper.py loop issue-to-pr --dry-run --json
-python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --latest-version v0.4.0 --json
-python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.4.0 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --latest-version v0.6.0 --json
+python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.6.0 --dry-run --json
 ```
 
-写入、发布、替换安装副本、创建 Issue、创建 PR、启用 Pages 都必须在诊断报告之后进入用户确认。
+`loop audit` 默认不写 GitHub；它输出 `should_capture`、`route`、`severity`、脱敏 Issue body 和可执行的 `gh issue create` 命令。写入、发布、替换安装副本、创建 Issue、创建 PR、启用 Pages 都必须在诊断报告之后进入用户确认。
 
 ## Harness Version Contract
 
@@ -133,7 +134,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/sk
 
 - Skill release 描述目标 Skill 行为版本。
 - Wrapper harness version 描述 EvoZeus-wrapper 注入的模板、脚本和治理逻辑版本。
-- `.evozeus/wrapper.json` 必须记录 `wrapper_repo`、`wrapper_version`、`canonical_repo`、`managed_files`、`install_links` 和 `integration.mode`。
+- `.evozeus_evoinfra/wrapper.json` 必须记录 `wrapper_repo`、`wrapper_version`、`canonical_repo`、`managed_files`、`install_links` 和 `integration.mode`。
 - wrapper major upgrade 必须用户确认。
 - wrapper upgrade 只能改 harness-managed files，不改目标 Skill 业务规则。
 - wrapper upgrade 必须生成迁移方案，说明 from/to wrapper version、planned files、`SKILL.md` 状态检查动作、append-only 动作、验证命令和回滚方案。
@@ -154,7 +155,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/sk
    - GitHub latest release tag。
    - `CHANGELOG.md` 最新 `vMAJOR.MINOR.PATCH` 条目，并先为该 tag 创建或确认 GitHub release。
    - 两者都没有时停止，让 owner 选择首个 Skill version。
-7. `v0.1.0` 只用于新建目标 repo 的首个 wrapped Skill release；wrapper harness version 另由 `.evozeus/wrapper.json` 记录。
+7. `v0.1.0` 只用于新建目标 repo 的首个 wrapped Skill release；wrapper harness version 另由 `.evozeus_evoinfra/wrapper.json` 记录。
 
 ## Data Policy
 

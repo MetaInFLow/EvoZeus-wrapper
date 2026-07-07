@@ -100,7 +100,7 @@ python3 scripts/evozeus_wrapper.py skill transform --mode <adopt|bootstrap|repai
   --json
 ```
 
-For `verify`, use preflight only after `.evozeus/wrapper.json` records the chosen `instruction_surface` or the repo has a root `SKILL.md` / `AGENTS.md`.
+For `verify`, use preflight only after `.evozeus_evoinfra/wrapper.json` records the chosen `instruction_surface` or the repo has a root `SKILL.md` / `AGENTS.md`.
 
 ## Stop Conditions
 
