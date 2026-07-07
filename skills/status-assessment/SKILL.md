@@ -24,10 +24,11 @@ Explain the process in this order so the user can feel where we are:
 1. **环境检查**：`~/.evozeus`、`git`、`gh`、`gh auth` 是否可用。
 2. **GitHub 权限检查**：repo 是否存在，visibility 是什么，当前账号是 `READ` / `WRITE` / `ADMIN`。
 3. **Repo 架构判断**：`single_skill`、`runtime_skill_bundle`、`hooked_skill_bundle`、`skill_bundle`、`agents_runtime` 或 `unknown`。
-4. **自进化说明位置**：读取 `skills/evolution-surface-diagnosis/SKILL.md` 的 decision，说明为什么放在那里。
-5. **缺失组件**：读取 `skill.component_gaps.missing_files` 和 `missing_concepts`，说明缺什么。
-6. **版本策略**：读取 `version.status` 和 `requires_owner_choice`，说明是否能继续。
-7. **下一步**：选择 transform mode 或停止条件。
+4. **Runtime 集成模式**：读取 `skill.integration.mode`，说明是否是真宿主 hook。`prompt_runtime_check` 和 `manual_only` 不得描述成 hook-backed。
+5. **自进化说明位置**：读取 `skills/evolution-surface-diagnosis/SKILL.md` 的 decision，说明为什么放在那里。
+6. **缺失组件**：读取 `skill.component_gaps.missing_files` 和 `missing_concepts`，说明缺什么。
+7. **版本策略**：读取 `version.status` 和 `requires_owner_choice`，说明是否能继续。
+8. **下一步**：选择 transform mode 或停止条件。
 
 ## Human Labels
 
@@ -74,9 +75,10 @@ Use concise Chinese. Do not dump raw JSON.
 1. 环境检查：<PASS / NEEDS_ACTION> - <原因>
 2. GitHub 权限：<PASS / NEEDS_ACTION> - <原因>
 3. Repo 架构：<PASS / NEEDS_ACTION> - <用户可理解类型；Skill 数量>
-4. 自进化说明位置：<PASS / NEEDS_ACTION> - <surface decision path + reason>
-5. 缺失组件：<PASS / NEEDS_ACTION> - <缺失数量和关键项>
-6. 版本策略：<PASS / NEEDS_ACTION> - <版本结论>
+4. Runtime 集成：<PASS / NEEDS_ACTION> - <integration.mode + 是否有宿主 hook 证据>
+5. 自进化说明位置：<PASS / NEEDS_ACTION> - <surface decision path + reason>
+6. 缺失组件：<PASS / NEEDS_ACTION> - <缺失数量和关键项>
+7. 版本策略：<PASS / NEEDS_ACTION> - <版本结论>
 
 阻塞项：
 - <没有则写“无”>
@@ -114,3 +116,4 @@ python3 scripts/evozeus_wrapper.py skill transform --mode verify --target /absol
 - Do not say “ready” when version requires owner choice.
 - Do not hide why the evolution surface was selected; explain the controlling evidence, such as `AGENTS.md`, hooks, plugin manifests, or a hook-loaded Skill.
 - Do not treat script-produced `evolution_surface.candidates` as final placement; they are evidence for the evolution surface diagnosis Skill.
+- Do not call `prompt_runtime_check`, `manual_only`, or wrapper CLI commands native hooks.

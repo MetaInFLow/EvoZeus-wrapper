@@ -156,6 +156,7 @@ def main() -> int:
             "requires_surface_diagnosis": requires_surface_diagnosis,
             "instruction_surface": instruction_surface,
             "instruction_surface_source": "diagnosis_skill" if args.instruction_surface else "root_entry_fallback",
+            "integration": architecture["integration"],
             "evolution_surface": architecture["evolution_surface"],
             "planned_files": planned_files,
             "version_rule": (

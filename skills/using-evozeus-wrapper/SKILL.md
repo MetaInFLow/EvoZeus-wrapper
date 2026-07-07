@@ -102,6 +102,7 @@ The diagnosis script reports facts only:
 - target kind: `single_skill`, `runtime_skill_bundle`, `hooked_skill_bundle`, `skill_bundle`, `agents_runtime`, or `unknown`
 - `skills/*/SKILL.md` inventory
 - evolution surface candidates and controller files
+- runtime integration mode: `native_host_hook`, `bootstrap_skill`, `prompt_runtime_check`, or `manual_only`
 - wrapper component gaps
 - source contract and runtime install state
 
@@ -121,6 +122,8 @@ Browse the whole target repo enough to prove what controls agent behavior:
 
 Choose `instruction_surface` only from repo evidence. For hook/plugin-controlled systems, pass the chosen relative path into transform with `--instruction-surface`.
 
+Do not call a wrapper CLI command a runtime hook. `native_host_hook` requires host/plugin lifecycle hook evidence. `prompt_runtime_check` is only prompt-compliance fallback.
+
 ### 4. Status Assessment
 
 Use `skills/status-assessment/SKILL.md`.
@@ -131,6 +134,7 @@ Explain to the user:
 - GitHub access
 - repo architecture
 - chosen instruction surface and evidence
+- runtime integration mode and whether host hook evidence exists
 - missing wrapper components
 - version status
 - blockers
