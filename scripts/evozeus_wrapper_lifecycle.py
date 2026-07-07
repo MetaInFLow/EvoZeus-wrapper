@@ -526,6 +526,39 @@ def hook_files(target: Path) -> list[str]:
     ]
 
 
+def classify_integration_mode(
+    target_kind: str,
+    root_entry: str | None,
+    hook_files: list[str],
+    plugin_manifests: list[str],
+    skill_entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if hook_files and plugin_manifests and skill_entries:
+        mode = "native_host_hook"
+        description = "Host/plugin lifecycle hooks are present and can load a control Skill."
+    elif plugin_manifests and skill_entries:
+        mode = "bootstrap_skill"
+        description = "Plugin skills are present, but no host lifecycle hook files were detected."
+    elif root_entry:
+        mode = "prompt_runtime_check"
+        description = "The instruction surface can require checks, but enforcement depends on prompt compliance."
+    else:
+        mode = "manual_only"
+        description = "No runtime instruction surface or host integration was detected."
+
+    return {
+        "mode": mode,
+        "native_host_hook_installed": mode == "native_host_hook",
+        "manual_wrapper_command": "not_runtime_integration",
+        "target_kind": target_kind,
+        "root_entry": root_entry,
+        "hook_files": hook_files,
+        "plugin_manifests": plugin_manifests,
+        "skill_count": len(skill_entries),
+        "description": description,
+    }
+
+
 def normalize_match_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower())
 
@@ -768,6 +801,13 @@ def detect_target_architecture(target: Path) -> dict[str, Any]:
         architecture_style = "unknown"
 
     root_entry = "SKILL.md" if has_root_skill else "AGENTS.md" if has_agents else None
+    integration = classify_integration_mode(
+        target_kind=target_kind,
+        root_entry=root_entry,
+        hook_files=hooks,
+        plugin_manifests=plugins,
+        skill_entries=entries,
+    )
     verification_candidates = [
         str(path.relative_to(target))
         for path in sorted((target / "automation").glob("*.py"))
@@ -784,6 +824,7 @@ def detect_target_architecture(target: Path) -> dict[str, Any]:
         "top_level_dirs": present_dirs,
         "plugin_manifests": plugins,
         "hook_files": hooks,
+        "integration": integration,
         "skill_inventory": {
             "count": len(entries),
             "entries": entries,
@@ -845,6 +886,7 @@ def diagnose_skill(
             "top_level_dirs": architecture["top_level_dirs"],
             "plugin_manifests": architecture["plugin_manifests"],
             "hook_files": architecture["hook_files"],
+            "integration": architecture["integration"],
             "skill_inventory": architecture["skill_inventory"],
             "verification_candidates": architecture["verification_candidates"],
         },
@@ -977,6 +1019,7 @@ def build_wrapper_manifest(
     managed_files: list[str],
     install_links: list[str],
     instruction_surface: str | None = None,
+    integration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     manifest = {
         "wrapper_repo": WRAPPER_REPO,
@@ -985,6 +1028,14 @@ def build_wrapper_manifest(
         "canonical_repo": repo,
         "managed_files": managed_files,
         "install_links": install_links,
+        "integration": integration
+        or classify_integration_mode(
+            target_kind="single_skill",
+            root_entry=instruction_surface or "SKILL.md",
+            hook_files=[],
+            plugin_manifests=[],
+            skill_entries=[],
+        ),
     }
     if instruction_surface:
         manifest["instruction_surface"] = instruction_surface
@@ -1179,6 +1230,7 @@ def plan_harness_upgrade(
         recommended_action = "create_harness_upgrade_pr"
 
     canonical_repo = manifest.get("canonical_repo") if manifest else None
+    integration = architecture["integration"]
     validation = [
         "python3 scripts/evozeus_wrapper_preflight.py structure",
     ]
@@ -1205,6 +1257,12 @@ def plan_harness_upgrade(
         "evolution_surface_policy": (
             f"add or refresh the wrapper-owned status prelude in {instruction_surface} before the main chain, then append "
             "the EvoZeus-wrapper section or a migration note; never rewrite target business rules"
+        ),
+        "integration": integration,
+        "integration_policy": (
+            "native_host_hook means a host/plugin lifecycle hook is installed; bootstrap_skill means plugin skill "
+            "infrastructure can load a control Skill; prompt_runtime_check is prompt-compliance fallback; manual "
+            "wrapper commands are not runtime hooks"
         ),
         "skill_md_policy": (
             "single Skill targets use SKILL.md; AGENTS.md-root targets use AGENTS.md; hook-controlled bundles use the hook-loaded control Skill"

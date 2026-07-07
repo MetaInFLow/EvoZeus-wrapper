@@ -35,6 +35,15 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 
 `SKILL.md` 的 frontmatter 后第一段必须是 `EvoZeus-wrapper 状态检查`。该状态检查先确认当前 Skill release、wrapper harness version 和 source contract；全部 OK 后，才进入目标 Skill 原本主链路。
 
+`.evozeus/wrapper.json` 的 `integration.mode` 说明当前运行时集成等级：
+
+- `native_host_hook`：宿主或插件 lifecycle hook 已安装，有 hook 文件和 plugin manifest 证据。
+- `bootstrap_skill`：插件 Skill 基础设施可加载控制 Skill，但没有检测到宿主 lifecycle hook。
+- `prompt_runtime_check`：靠 `SKILL.md` / `AGENTS.md` 说明要求 agent 执行检查，不是真 hook。
+- `manual_only`：只能手动运行 wrapper 命令。
+
+不要把 `python3 scripts/evozeus_wrapper.py hook start-check ...` 这类手动命令描述为宿主级 hook，除非 `integration.mode=native_host_hook`。
+
 Wrapper-managed Skill 的源头发现顺序固定：
 
 1. 读取 `.evozeus/wrapper.json`。

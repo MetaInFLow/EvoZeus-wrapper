@@ -43,11 +43,12 @@ Ask the user only when:
    - `skill_bundle`
    - `agents_runtime`
    - `unknown`
-4. Report Skill inventory from `skills/*/SKILL.md` when present.
-5. Report `evolution_surface` facts: candidate instruction surfaces, controller files, and evidence boundaries. Do not treat script candidates as final placement.
-6. Use `skills/evolution-surface-diagnosis/SKILL.md` to browse the whole repo and choose the controlling instruction surface.
-7. Report `component_gaps`: missing wrapper files, manifest, changelog, and status-check concept after the surface decision is known.
-8. Hand the diagnosis JSON and surface decision to `skills/status-assessment/SKILL.md`; do not write user-facing status analysis in the script.
+4. Report runtime integration mode from `skill.integration`. Distinguish `native_host_hook`, `bootstrap_skill`, `prompt_runtime_check`, and `manual_only`; do not call wrapper CLI commands runtime hooks.
+5. Report Skill inventory from `skills/*/SKILL.md` when present.
+6. Report `evolution_surface` facts: candidate instruction surfaces, controller files, and evidence boundaries. Do not treat script candidates as final placement.
+7. Use `skills/evolution-surface-diagnosis/SKILL.md` to browse the whole repo and choose the controlling instruction surface.
+8. Report `component_gaps`: missing wrapper files, manifest, changelog, and status-check concept after the surface decision is known.
+9. Hand the diagnosis JSON and surface decision to `skills/status-assessment/SKILL.md`; do not write user-facing status analysis in the script.
 
 ## Stop Conditions
 

@@ -1,3 +1,5 @@
+import contextlib
+import io
 from datetime import date
 from pathlib import Path
 import tempfile
@@ -7,6 +9,7 @@ from scripts.evozeus_wrapper_lifecycle import (
     build_wrapper_manifest,
     classify_pr_permission,
     classify_wrapper_upgrade,
+    classify_integration_mode,
     detect_target_architecture,
     diagnose_environment,
     diagnose_skill,
@@ -21,7 +24,10 @@ from scripts.evozeus_wrapper_lifecycle import (
     stage_label,
     write_wrapper_manifest,
 )
-from scripts.evozeus_wrapper_preflight import root_entry_path as preflight_root_entry_path
+from scripts.evozeus_wrapper_preflight import (
+    check_integration_contract,
+    root_entry_path as preflight_root_entry_path,
+)
 
 
 class LifecycleBasicsTest(unittest.TestCase):
@@ -126,6 +132,28 @@ class LifecycleBasicsTest(unittest.TestCase):
             entry = preflight_root_entry_path(target)
 
             self.assertEqual(str(entry.relative_to(target)), "skills/session-bootstrap/SKILL.md")
+
+    def test_preflight_rejects_native_hook_mode_without_hook_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "wrapped-skill"
+            target.mkdir()
+            manifest = {"integration": {"mode": "native_host_hook"}}
+
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_integration_contract(target, manifest)
+
+    def test_preflight_accepts_native_hook_mode_with_hook_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "wrapped-skill"
+            target.mkdir()
+            (target / ".claude-plugin").mkdir()
+            (target / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+            (target / "hooks").mkdir()
+            (target / "hooks" / "hooks.json").write_text("{}", encoding="utf-8")
+            manifest = {"integration": {"mode": "native_host_hook"}}
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                check_integration_contract(target, manifest)
 
 
 class EnvironmentDiagnosisTest(unittest.TestCase):
@@ -342,6 +370,42 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
                 "evolution surface diagnosis result",
                 architecture["component_gaps"]["missing_concepts"],
             )
+            self.assertEqual(architecture["integration"]["mode"], "native_host_hook")
+            self.assertTrue(architecture["integration"]["native_host_hook_installed"])
+
+    def test_detect_target_architecture_marks_single_skill_as_prompt_runtime_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "single-skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text('---\nname: "single-skill"\n---\n', encoding="utf-8")
+
+            architecture = detect_target_architecture(target)
+
+            self.assertEqual(architecture["target_kind"], "single_skill")
+            self.assertEqual(architecture["integration"]["mode"], "prompt_runtime_check")
+            self.assertFalse(architecture["integration"]["native_host_hook_installed"])
+
+    def test_codex_plugin_with_empty_hooks_is_not_native_host_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "codex-plugin"
+            target.mkdir()
+            (target / ".codex-plugin").mkdir()
+            (target / ".codex-plugin" / "plugin.json").write_text(
+                '{"skills":"./skills/","hooks":{}}',
+                encoding="utf-8",
+            )
+            skill_dir = target / "skills" / "using-example"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                '---\nname: "using-example"\n---\n# Bootstrap\nUse when starting a session.\n',
+                encoding="utf-8",
+            )
+
+            architecture = detect_target_architecture(target)
+
+            self.assertEqual(architecture["target_kind"], "skill_bundle")
+            self.assertEqual(architecture["integration"]["mode"], "bootstrap_skill")
+            self.assertFalse(architecture["integration"]["native_host_hook_installed"])
 
     def test_diagnose_skill_accepts_agents_root_runtime_skill_bundle(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -390,6 +454,19 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             self.assertEqual(report["publication"]["visibility"], "PRIVATE")
             self.assertEqual(report["version"]["status"], "missing_version_requires_owner_choice")
 
+    def test_classify_integration_mode_names_manual_command_as_non_runtime_integration(self):
+        integration = classify_integration_mode(
+            target_kind="single_skill",
+            root_entry="SKILL.md",
+            hook_files=[],
+            plugin_manifests=[],
+            skill_entries=[],
+        )
+
+        self.assertEqual(integration["mode"], "prompt_runtime_check")
+        self.assertEqual(integration["manual_wrapper_command"], "not_runtime_integration")
+        self.assertIn("prompt", integration["description"])
+
 
 class WrapperManifestTest(unittest.TestCase):
     def test_write_and_load_wrapper_manifest(self):
@@ -412,6 +489,8 @@ class WrapperManifestTest(unittest.TestCase):
             self.assertEqual(loaded["canonical_repo"], "MetaInFLow/resume-screening")
             self.assertEqual(loaded["managed_files"], ["WRAPPER.md", "scripts/evozeus_wrapper_preflight.py"])
             self.assertEqual(loaded["install_links"], ["/Users/anthonyf/.codex/skills/resume-screening"])
+            self.assertEqual(loaded["integration"]["mode"], "prompt_runtime_check")
+            self.assertFalse(loaded["integration"]["native_host_hook_installed"])
 
     def test_write_wrapper_manifest_skips_existing_without_force(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -631,6 +710,7 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "skill"
             target.mkdir()
+            (target / "SKILL.md").write_text('---\nname: "skill"\n---\n', encoding="utf-8")
             write_wrapper_manifest(
                 target,
                 build_wrapper_manifest("MetaInFLow/skill", "v0.1.1", ["WRAPPER.md"], []),
@@ -653,6 +733,8 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
                 plan["migration"]["doc_path"],
                 "docs/wrapper-migrations/2026-06-27-v0.1.1-to-v0.2.0.md",
             )
+            self.assertEqual(plan["integration"]["mode"], "prompt_runtime_check")
+            self.assertFalse(plan["integration"]["native_host_hook_installed"])
             self.assertIn("SKILL.md EvoZeus-wrapper status check section (front matter prelude)", plan["planned_files"])
             self.assertIn("SKILL.md EvoZeus-wrapper section or migration note (append only)", plan["planned_files"])
             self.assertIn("docs/wrapper-migrations/README.md", plan["planned_files"])

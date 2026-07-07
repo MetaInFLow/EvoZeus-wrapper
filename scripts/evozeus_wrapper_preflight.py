@@ -73,6 +73,15 @@ PLACEHOLDER_PATTERNS = [
 
 VERSION_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+PLUGIN_MANIFEST_CANDIDATES = [
+    ".codex-plugin/plugin.json",
+    ".claude-plugin/plugin.json",
+    ".cursor-plugin/plugin.json",
+    ".kimi-plugin/plugin.json",
+    ".opencode/INSTALL.md",
+    "gemini-extension.json",
+    "package.json",
+]
 
 
 def fail(message: str) -> None:
@@ -157,6 +166,46 @@ def load_wrapper_manifest(target: Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         fail(f"invalid wrapper manifest JSON: {path}: {exc}")
+
+
+def detected_hook_files(target: Path) -> list[str]:
+    hooks_dir = target / "hooks"
+    if not hooks_dir.is_dir():
+        return []
+    return [
+        str(path.relative_to(target))
+        for path in sorted(hooks_dir.iterdir())
+        if path.is_file()
+    ]
+
+
+def detected_plugin_manifests(target: Path) -> list[str]:
+    return [path for path in PLUGIN_MANIFEST_CANDIDATES if (target / path).is_file()]
+
+
+def check_integration_contract(target: Path, manifest: dict | None) -> None:
+    integration = (manifest or {}).get("integration") or {}
+    mode = integration.get("mode")
+    if not mode:
+        warn("wrapper manifest has no integration.mode; treating runtime checks as prompt/manual fallback")
+        return
+
+    if mode == "native_host_hook":
+        hooks = detected_hook_files(target)
+        plugins = detected_plugin_manifests(target)
+        if not hooks or not plugins:
+            fail(
+                "integration.mode is native_host_hook but host hook evidence is missing: "
+                f"hooks={hooks or 'none'}, plugin_manifests={plugins or 'none'}"
+            )
+        ok("integration contract has host hook evidence")
+        return
+
+    if mode in {"bootstrap_skill", "prompt_runtime_check", "manual_only"}:
+        ok(f"integration contract declares non-native mode: {mode}")
+        return
+
+    fail(f"unknown integration.mode: {mode}")
 
 
 def project_pointer_path(repo: str) -> Path:
@@ -427,6 +476,8 @@ def check_structure(args: argparse.Namespace) -> None:
     missing = [path for path in REQUIRED_FILES if not (target / path).exists()]
     if missing:
         fail("missing required wrapper files:\n" + "\n".join(f"- {path}" for path in missing))
+    manifest = load_wrapper_manifest(target)
+    check_integration_contract(target, manifest)
     entry = root_entry_path(target)
     entry_text = read_text(entry)
     label = str(entry.relative_to(target))

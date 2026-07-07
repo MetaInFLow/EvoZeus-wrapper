@@ -27,6 +27,21 @@ environment diagnosis
 | Before | 本地 Skill 文件夹，至少包含 `SKILL.md` |
 | After | canonical GitHub repo、GitHub Pages、`.evozeus/wrapper.json`、`CHANGELOG.md`、Issue template、PR template、design doc template、preflight checker、runtime symlink |
 
+## Runtime Integration Contract
+
+Wrapper 不能把所有启动检查都叫作 hook。`.evozeus/wrapper.json` 必须记录当前事实级别：
+
+| mode | 含义 |
+| --- | --- |
+| `native_host_hook` | 宿主或插件 lifecycle hook 会自动触发，且 repo 中有 hook 文件和 plugin manifest 证据。 |
+| `bootstrap_skill` | 插件/Skill 基础设施可加载控制 Skill，但没有检测到宿主 lifecycle hook 文件。 |
+| `prompt_runtime_check` | `SKILL.md` 或 `AGENTS.md` 要求 agent 运行检查；这是 prompt-compliance fallback，不是真 hook。 |
+| `manual_only` | 只能手动运行 wrapper 命令；没有可检测的运行时入口。 |
+
+`python3 scripts/evozeus_wrapper.py hook start-check ...` 这类 wrapper CLI 命令不是 runtime hook。只有当 `native_host_hook` 或其他宿主集成自动调用它时，才能被描述为 hook-backed execution。
+
+Preflight 必须阻止能力夸大：如果 manifest 声称 `integration.mode=native_host_hook`，但缺少 hook 文件或 plugin manifest，结构检查必须失败。
+
 ## Single Source Contract
 
 同一个 Skill 在本地只允许一个 physical GitHub repo clone。
@@ -118,7 +133,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/sk
 
 - Skill release 描述目标 Skill 行为版本。
 - Wrapper harness version 描述 EvoZeus-wrapper 注入的模板、脚本和治理逻辑版本。
-- `.evozeus/wrapper.json` 必须记录 `wrapper_repo`、`wrapper_version`、`canonical_repo`、`managed_files` 和 `install_links`。
+- `.evozeus/wrapper.json` 必须记录 `wrapper_repo`、`wrapper_version`、`canonical_repo`、`managed_files`、`install_links` 和 `integration.mode`。
 - wrapper major upgrade 必须用户确认。
 - wrapper upgrade 只能改 harness-managed files，不改目标 Skill 业务规则。
 - wrapper upgrade 必须生成迁移方案，说明 from/to wrapper version、planned files、`SKILL.md` 状态检查动作、append-only 动作、验证命令和回滚方案。
