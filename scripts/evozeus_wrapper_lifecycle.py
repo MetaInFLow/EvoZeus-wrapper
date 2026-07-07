@@ -1355,6 +1355,15 @@ def plan_feedback_audit(target: Path, user_input: str, context: str | None = Non
         else "no reusable correction, dissatisfaction, or mechanism defect detected"
     )
     canonical_repo = (manifest or {}).get("canonical_repo")
+    if route == "wrapper":
+        issue_repo = WRAPPER_REPO
+        secondary_issue_repo = None
+    elif route == "both":
+        issue_repo = canonical_repo
+        secondary_issue_repo = WRAPPER_REPO
+    else:
+        issue_repo = canonical_repo
+        secondary_issue_repo = None
     title = feedback_issue_title(route, user_input)
     body = feedback_issue_body(
         route=route,
@@ -1364,10 +1373,10 @@ def plan_feedback_audit(target: Path, user_input: str, context: str | None = Non
         context=context,
     )
     issue_command = None
-    if should_capture and canonical_repo:
+    if should_capture and issue_repo:
         issue_command = (
             "gh issue create "
-            f"--repo {canonical_repo} "
+            f"--repo {issue_repo} "
             f"--title {json.dumps(title, ensure_ascii=False)} "
             "--body-file <redacted-feedback.md>"
         )
@@ -1383,6 +1392,8 @@ def plan_feedback_audit(target: Path, user_input: str, context: str | None = Non
         "audit_rule_path": policy.get("audit_rule") or TARGET_AUDIT_RULE,
         "management_mode": policy.get("management_mode", "manual"),
         "canonical_repo": canonical_repo,
+        "issue_repo": issue_repo,
+        "secondary_issue_repo": secondary_issue_repo,
         "should_capture": should_capture,
         "reason": reason,
         "route": route,

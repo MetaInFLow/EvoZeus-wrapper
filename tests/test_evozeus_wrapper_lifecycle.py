@@ -256,8 +256,9 @@ class LifecycleBasicsTest(unittest.TestCase):
 
             self.assertTrue(report["should_capture"])
             self.assertEqual(report["route"], "wrapper")
+            self.assertEqual(report["issue_repo"], "MetaInFLow/EvoZeus-wrapper")
             self.assertEqual(report["policy_path"], ".evozeus_evoinfra/feedback-policy.json")
-            self.assertIn("gh issue create --repo MetaInFLow/skill", report["issue_create_command"])
+            self.assertIn("gh issue create --repo MetaInFLow/EvoZeus-wrapper", report["issue_create_command"])
 
     def test_preflight_rejects_native_hook_mode_without_hook_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
