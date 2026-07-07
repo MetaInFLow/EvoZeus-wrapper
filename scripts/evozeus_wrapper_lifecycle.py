@@ -21,6 +21,8 @@ STAGE_LABELS = {
 REQUIRED_WRAPPER_FILES = [
     "CHANGELOG.md",
     "WRAPPER.md",
+    ".evozeus/feedback-policy.json",
+    ".evozeus/audit-rule.md",
     "docs/index.md",
     "docs/_config.yml",
     "docs/design-doc-template.md",
@@ -35,6 +37,8 @@ REQUIRED_WRAPPER_FILES = [
 
 WRAPPER_MANAGED_FILES = [
     "WRAPPER.md",
+    ".evozeus/feedback-policy.json",
+    ".evozeus/audit-rule.md",
     "docs/index.md",
     "docs/_config.yml",
     "docs/design-doc-template.md",
@@ -53,6 +57,41 @@ VERSION_HEADER_RE = re.compile(r"^##\s+\[?(v\d+\.\d+\.\d+)\]?\b", re.MULTILINE)
 SKILL_STATUS_SECTION = "SKILL.md EvoZeus-wrapper status check section (front matter prelude)"
 SKILL_WRAPPER_SECTION = "SKILL.md EvoZeus-wrapper section or migration note (append only)"
 WRAPPER_MIGRATION_README = "docs/wrapper-migrations/README.md"
+FEEDBACK_POLICY_PATH = ".evozeus/feedback-policy.json"
+AUDIT_RULE_PATH = ".evozeus/audit-rule.md"
+DEFAULT_FEEDBACK_POLICY = {
+    "management_mode": "semi_managed",
+    "strictness": "medium",
+    "audit_rule": AUDIT_RULE_PATH,
+    "capture_evidence_regex": [
+        "Skill Feedback Issue",
+        "gh issue create",
+        "created issue",
+        "lesson captured",
+        "经验已上传",
+        "自进化记录",
+    ],
+    "routing": {
+        "target_skill_issue_when": [
+            "domain_rule_missing",
+            "tool_profile_wrong",
+            "business_process_wrong",
+            "deliverable_gate_wrong",
+        ],
+        "wrapper_issue_when": [
+            "feedback_not_captured",
+            "mode_config_missing",
+            "hook_missing",
+            "cannot_route_issue_owner",
+        ],
+        "both_when": [
+            "target_skill_rule_missing_and_wrapper_failed_to_capture",
+        ],
+    },
+}
+VALID_MANAGEMENT_MODES = {"full_managed", "semi_managed", "manual"}
+VALID_STRICTNESS_LEVELS = {"weak", "medium", "strong"}
+VALID_FEEDBACK_ROUTES = {"target_skill", "wrapper", "both", "none"}
 CONTROL_SKILL_NAME_TOKENS = (
     "bootstrap",
     "control",
@@ -539,6 +578,230 @@ def read_text_if_small(path: Path, limit: int = 200_000) -> str:
         return path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return ""
+
+
+def merge_feedback_policy(raw: dict[str, Any] | None) -> dict[str, Any]:
+    policy = json.loads(json.dumps(DEFAULT_FEEDBACK_POLICY))
+    if raw:
+        for key, value in raw.items():
+            if key == "routing" and isinstance(value, dict):
+                policy["routing"].update(value)
+            else:
+                policy[key] = value
+
+    if policy.get("management_mode") not in VALID_MANAGEMENT_MODES:
+        policy["management_mode"] = DEFAULT_FEEDBACK_POLICY["management_mode"]
+    if policy.get("strictness") not in VALID_STRICTNESS_LEVELS:
+        policy["strictness"] = DEFAULT_FEEDBACK_POLICY["strictness"]
+    if not isinstance(policy.get("capture_evidence_regex"), list):
+        policy["capture_evidence_regex"] = DEFAULT_FEEDBACK_POLICY["capture_evidence_regex"]
+    if not isinstance(policy.get("audit_rule"), str) or not policy["audit_rule"].strip():
+        policy["audit_rule"] = AUDIT_RULE_PATH
+    return policy
+
+
+def load_feedback_policy(target: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    path = target / FEEDBACK_POLICY_PATH
+    if not path.exists():
+        return merge_feedback_policy(None), {
+            "path": FEEDBACK_POLICY_PATH,
+            "exists": False,
+            "status": "default_policy_used",
+            "error": None,
+        }
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        return merge_feedback_policy(None), {
+            "path": FEEDBACK_POLICY_PATH,
+            "exists": True,
+            "status": "invalid_json_default_policy_used",
+            "error": str(error),
+        }
+    return merge_feedback_policy(data if isinstance(data, dict) else None), {
+        "path": FEEDBACK_POLICY_PATH,
+        "exists": True,
+        "status": "loaded",
+        "error": None,
+    }
+
+
+def read_audit_rule(target: Path, policy: dict[str, Any]) -> dict[str, Any]:
+    rule_path = str(policy.get("audit_rule") or AUDIT_RULE_PATH)
+    path = target / rule_path
+    text = read_text_if_small(path, limit=120_000)
+    return {
+        "path": rule_path,
+        "exists": bool(text),
+        "content": text,
+        "required_return_schema": {
+            "should_capture": "boolean",
+            "reason": "string",
+            "route": "target_skill|wrapper|both|none",
+            "severity": "P0|P1|P2|P3",
+            "evidence_boundary": "public|redacted_private|private_internal",
+        },
+    }
+
+
+def capture_evidence_matches(policy: dict[str, Any], text: str) -> dict[str, Any]:
+    matches = []
+    for pattern in policy.get("capture_evidence_regex", []):
+        try:
+            if re.search(str(pattern), text or "", flags=re.IGNORECASE):
+                matches.append(str(pattern))
+        except re.error:
+            continue
+    return {
+        "matched": bool(matches),
+        "matched_patterns": matches,
+    }
+
+
+def explicit_feedback_signal(text: str) -> bool:
+    normalized = normalize_match_text(text)
+    signals = [
+        "不对",
+        "不是",
+        "不行",
+        "为什么没有",
+        "没有触发",
+        "不满意",
+        "过期了",
+        "换方向",
+        "重新",
+        "你当前",
+        "你让我",
+        "应该",
+        "要支持",
+        "不够严格",
+    ]
+    return any(signal in normalized for signal in signals)
+
+
+def classify_feedback_route(text: str) -> str:
+    normalized = normalize_match_text(text)
+    wrapper_terms = [
+        "evozeus-wrapper",
+        "wrapper",
+        "harness",
+        "hook",
+        "dry-run",
+        "audit",
+        "audit-rule",
+        "feedback",
+        "issue",
+        "自进化",
+        "托管",
+    ]
+    target_terms = [
+        "当前skill",
+        "项目管理skill",
+        "profile",
+        "周末",
+        "排期",
+        "交付物",
+        "工作日志",
+        "权限",
+        "链接",
+        "base",
+        "飞书",
+    ]
+    wrapper_hit = any(term in normalized for term in wrapper_terms)
+    target_hit = any(term in normalized for term in target_terms)
+    if wrapper_hit and target_hit:
+        return "both"
+    if wrapper_hit:
+        return "wrapper"
+    if target_hit:
+        return "target_skill"
+    return "target_skill"
+
+
+def validate_audit_judgment(raw: dict[str, Any]) -> dict[str, Any]:
+    should_capture = bool(raw.get("should_capture"))
+    route = str(raw.get("route") or "none")
+    if route not in VALID_FEEDBACK_ROUTES:
+        route = "none"
+    return {
+        "should_capture": should_capture,
+        "reason": str(raw.get("reason") or "audit judgment did not provide a reason"),
+        "route": route,
+        "severity": str(raw.get("severity") or "P2"),
+        "evidence_boundary": str(raw.get("evidence_boundary") or "redacted_private"),
+    }
+
+
+def feedback_next_action(decision: dict[str, Any], management_mode: str) -> str:
+    if not decision.get("should_capture"):
+        return "pass"
+    if management_mode == "full_managed":
+        return "create_issue"
+    if management_mode == "semi_managed":
+        return "dry_run_prompt_for_submission"
+    return "report_only"
+
+
+def plan_feedback_audit(
+    target: Path,
+    user_input: str,
+    context: str = "",
+    capture_log: str = "",
+    audit_judgment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    policy, policy_meta = load_feedback_policy(target)
+    audit_rule = read_audit_rule(target, policy)
+    evidence = capture_evidence_matches(policy, capture_log)
+    management_mode = policy["management_mode"]
+
+    if evidence["matched"]:
+        decision = {
+            "should_capture": False,
+            "reason": "feedback capture evidence already exists in the provided capture log",
+            "route": "none",
+            "severity": "P3",
+            "evidence_boundary": "redacted_private",
+        }
+        decision_source = "capture_evidence_regex"
+    elif audit_judgment is not None:
+        decision = validate_audit_judgment(audit_judgment)
+        decision_source = "audit_rule_judgment"
+    else:
+        combined = "\n".join([user_input or "", context or ""])
+        should_capture = explicit_feedback_signal(combined)
+        decision = {
+            "should_capture": should_capture,
+            "reason": (
+                "current input contains an explicit dissatisfaction, correction, or mechanism-change signal"
+                if should_capture
+                else "no clear reusable dissatisfaction or direction-change signal was detected by the fallback pass"
+            ),
+            "route": classify_feedback_route(combined) if should_capture else "none",
+            "severity": "P1" if should_capture else "P3",
+            "evidence_boundary": "redacted_private",
+        }
+        decision_source = "deterministic_fallback"
+
+    decision["next_action"] = feedback_next_action(decision, management_mode)
+    return {
+        "stage": "continuous_evolution_loop",
+        "flow": "feedback_audit",
+        "target": str(target),
+        "writes": False,
+        "policy": {
+            "management_mode": management_mode,
+            "strictness": policy["strictness"],
+            "audit_rule": policy["audit_rule"],
+            "capture_evidence_regex": policy["capture_evidence_regex"],
+        },
+        "policy_meta": policy_meta,
+        "audit_rule": audit_rule,
+        "capture_evidence": evidence,
+        "decision_source": decision_source,
+        "semantic_audit_required": audit_judgment is None and not evidence["matched"] and policy["strictness"] in {"medium", "strong"},
+        "decision": decision,
+    }
 
 
 def controller_corpus(target: Path, controllers: list[str]) -> str:
@@ -1227,4 +1490,64 @@ def plan_harness_upgrade(
             "Update .evozeus/wrapper.json wrapper_version after validation passes.",
         ],
         "validation": validation,
+    }
+
+
+def plan_harness_start_check(
+    target: Path,
+    latest_version: str | None,
+    managed_dirty: bool = False,
+    enforcement: str = "advisory",
+    today: date | None = None,
+) -> dict[str, Any]:
+    enforcement = enforcement if enforcement in {"advisory", "strict"} else "advisory"
+    if not latest_version:
+        return {
+            "stage": "hook_start_check",
+            "flow": "harness_version_check",
+            "target": str(target.expanduser().resolve()),
+            "writes": False,
+            "enforcement": enforcement,
+            "decision": {
+                "level": "block",
+                "allow": False,
+                "reason": "hook start-check requires latest_version; without it the hook cannot prove the harness is current",
+                "next_action": "provide_latest_wrapper_version",
+            },
+            "harness": None,
+        }
+
+    plan = plan_harness_upgrade(
+        target=target,
+        latest_version=latest_version,
+        managed_dirty=managed_dirty,
+        today=today,
+    )
+    status = plan["upgrade_status"]
+    if status in {"up_to_date", "local_ahead"}:
+        level = "allow"
+        allow = True
+        reason = "wrapper harness version is acceptable for this start"
+    elif status == "auto_pr" and enforcement == "advisory":
+        level = "warn"
+        allow = True
+        reason = "wrapper harness has a non-breaking upgrade available; continue but create an upgrade PR"
+    else:
+        level = "block"
+        allow = False
+        reason = "wrapper harness is missing, unknown, dirty, major-upgrade, or blocked by strict enforcement"
+
+    return {
+        "stage": "hook_start_check",
+        "flow": "harness_version_check",
+        "target": plan["target"],
+        "writes": False,
+        "enforcement": enforcement,
+        "decision": {
+            "level": level,
+            "allow": allow,
+            "reason": reason,
+            "next_action": plan["recommended_action"],
+        },
+        "harness": plan,
     }

@@ -10,9 +10,12 @@ Use this stage to keep target Skill infrastructure aligned with `MetaInFLow/EvoZ
 ## Commands
 
 ```bash
+python3 scripts/evozeus_wrapper.py hook start-check --target /absolute/path/to/skill --latest-version v0.3.0 --json
 python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --json
 python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.3.0 --dry-run --json
 ```
+
+Use `hook start-check` at target Skill startup. It decides allow/warn/block and does not write files. Use `harness upgrade-check` and `harness upgrade --dry-run` after a hook warns or blocks.
 
 ## Rules
 

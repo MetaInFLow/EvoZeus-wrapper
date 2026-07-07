@@ -13,6 +13,8 @@ from scripts.evozeus_wrapper_lifecycle import (
     diagnose_source_contract,
     load_wrapper_manifest,
     plan_harness_upgrade,
+    plan_harness_start_check,
+    plan_feedback_audit,
     path_kind,
     plan_reinstall,
     plan_transform_action,
@@ -627,6 +629,67 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
         self.assertEqual(classify_wrapper_upgrade("v0.1.0", "v1.0.0", managed_dirty=False), "requires_confirmation")
         self.assertEqual(classify_wrapper_upgrade("v0.2.0", "v0.1.0", managed_dirty=False), "local_ahead")
 
+    def test_plan_feedback_audit_skips_when_capture_evidence_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+
+            report = plan_feedback_audit(
+                target=target,
+                user_input="不对，这个应该沉淀",
+                capture_log="created issue https://github.com/o/r/issues/1",
+            )
+
+            self.assertEqual(report["flow"], "feedback_audit")
+            self.assertTrue(report["capture_evidence"]["matched"])
+            self.assertFalse(report["decision"]["should_capture"])
+            self.assertEqual(report["decision"]["next_action"], "pass")
+
+    def test_plan_feedback_audit_routes_wrapper_feedback_by_rule_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+
+            report = plan_feedback_audit(
+                target=target,
+                user_input="audit trigger 不行，wrapper harness 要支持 audit-rule.md",
+            )
+
+            self.assertEqual(report["decision_source"], "deterministic_fallback")
+            self.assertTrue(report["decision"]["should_capture"])
+            self.assertEqual(report["decision"]["route"], "wrapper")
+            self.assertEqual(report["decision"]["next_action"], "dry_run_prompt_for_submission")
+            self.assertTrue(report["semantic_audit_required"])
+
+    def test_plan_feedback_audit_uses_audit_json_and_full_managed_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            policy_dir = target / ".evozeus"
+            policy_dir.mkdir(parents=True)
+            (policy_dir / "feedback-policy.json").write_text(
+                '{"management_mode":"full_managed","strictness":"strong","audit_rule":".evozeus/audit-rule.md"}',
+                encoding="utf-8",
+            )
+            (policy_dir / "audit-rule.md").write_text("# Audit\nReturn JSON.\n", encoding="utf-8")
+
+            report = plan_feedback_audit(
+                target=target,
+                user_input="当前 Skill 和 wrapper 都需要优化",
+                audit_judgment={
+                    "should_capture": True,
+                    "reason": "The target rule is missing and the wrapper failed to capture it.",
+                    "route": "both",
+                    "severity": "P1",
+                    "evidence_boundary": "redacted_private",
+                },
+            )
+
+            self.assertEqual(report["policy"]["management_mode"], "full_managed")
+            self.assertEqual(report["decision_source"], "audit_rule_judgment")
+            self.assertTrue(report["audit_rule"]["exists"])
+            self.assertEqual(report["decision"]["route"], "both")
+            self.assertEqual(report["decision"]["next_action"], "create_issue")
+
     def test_plan_harness_upgrade_returns_append_only_migration_plan(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "skill"
@@ -734,6 +797,57 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
                 plan["planned_files"],
             )
             self.assertIn("skills/session-bootstrap/SKILL.md", plan["evolution_surface_policy"])
+
+    def test_plan_harness_start_check_allows_non_breaking_upgrade_in_advisory_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.4.0", ["WRAPPER.md"], []),
+            )
+
+            report = plan_harness_start_check(
+                target=target,
+                latest_version="v0.5.0",
+                enforcement="advisory",
+                today=date(2026, 7, 7),
+            )
+
+            self.assertEqual(report["stage"], "hook_start_check")
+            self.assertEqual(report["decision"]["level"], "warn")
+            self.assertTrue(report["decision"]["allow"])
+            self.assertEqual(report["harness"]["upgrade_status"], "auto_pr")
+
+    def test_plan_harness_start_check_blocks_non_breaking_upgrade_in_strict_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.4.0", ["WRAPPER.md"], []),
+            )
+
+            report = plan_harness_start_check(
+                target=target,
+                latest_version="v0.5.0",
+                enforcement="strict",
+            )
+
+            self.assertEqual(report["decision"]["level"], "block")
+            self.assertFalse(report["decision"]["allow"])
+            self.assertEqual(report["decision"]["next_action"], "create_harness_upgrade_pr")
+
+    def test_plan_harness_start_check_requires_latest_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+
+            report = plan_harness_start_check(target=target, latest_version=None)
+
+            self.assertEqual(report["decision"]["level"], "block")
+            self.assertFalse(report["decision"]["allow"])
+            self.assertEqual(report["decision"]["next_action"], "provide_latest_wrapper_version")
 
 
 if __name__ == "__main__":

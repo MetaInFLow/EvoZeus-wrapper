@@ -17,6 +17,8 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 | 当前 Skill 版本 | `{{CURRENT_VERSION}}` |
 | Wrapper harness 版本 | `{{WRAPPER_VERSION}}` |
 | Wrapper manifest | `.evozeus/wrapper.json` |
+| Feedback audit policy | `.evozeus/feedback-policy.json` |
+| Feedback audit rule | `.evozeus/audit-rule.md` |
 | Wrapper migrations | [`docs/wrapper-migrations/`](wrapper-migrations/) |
 | Changelog | [`CHANGELOG.md`]({{REPO_URL}}/blob/main/CHANGELOG.md) |
 | Design docs | [`docs/designs/`](designs/) |
@@ -30,6 +32,20 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 - 复现输入或场景。
 - 证据边界。
 - 影响程度。
+
+## 反馈审计
+
+每轮结束前，如果用户明确纠正、表达不满意、要求换方向，或要求调整可复用机制，先运行反馈审计：
+
+```bash
+python3 scripts/evozeus_wrapper.py loop audit \
+  --target /absolute/path/to/this-skill \
+  --user-input "<current input>" \
+  --context "<redacted recent context>" \
+  --json
+```
+
+`.evozeus/audit-rule.md` 定义语义判断要求，必须返回 `should_capture`、`reason`、`route`、`severity` 和 `evidence_boundary`。`.evozeus/feedback-policy.json` 定义托管模式：`full_managed` 直接提交，`semi_managed` dry-run 请求确认，`manual` 只报告。
 
 ## 进化规则
 
@@ -49,6 +65,17 @@ Wrapper-managed Skill 的源头发现顺序固定：
 python3 scripts/evozeus_wrapper_preflight.py doctor --repo {{REPO_NAME}}
 python3 scripts/evozeus_wrapper_preflight.py version --repo {{REPO_NAME}}
 ```
+
+运行时集成应通过 start hook 检查 wrapper harness 版本：
+
+```bash
+python3 scripts/evozeus_wrapper.py hook start-check \
+  --target /absolute/path/to/this-skill \
+  --latest-version <latest-wrapper-version> \
+  --json
+```
+
+hook 只在 `decision.allow` 为 true 时进入目标 Skill 主链路；`decision.level=block` 时必须先处理 harness 升级或修复。
 
 每次 Skill 更新必须先写 design doc，再开 PR。根目录 `SKILL.md` 是 repo 化后的可运行入口；`~/.evozeus/.projects/{{REPO_NAME}}` 和 runtime 安装路径应指向同一个 canonical repo，不保留 copied install 作为第二事实源，也不要直接修改 `.codex/skills/...` 或 `.agents/skills/...`。
 

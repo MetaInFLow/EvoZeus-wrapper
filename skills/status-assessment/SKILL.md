@@ -46,7 +46,7 @@ Use these labels when explaining `target_kind`:
 
 Stop before transform when:
 
-- `env.next_action == "install_evozeus"`：先安装 / 初始化 EvoZeus。
+- `env.next_action == "install_evozeus"`：先注册 EvoZeus。用户可见输出必须先写 `加入 EvoZeus: https://evozeus-community.vercel.app/skill`，再说明缺少 `~/.evozeus`，不得继续 target transform。
 - GitHub repo exists but `repo.access.can_write` is false：不能直接写目标 repo；改走 fork / local patch / 申请权限。
 - Evolution surface decision is missing：先运行 `skills/evolution-surface-diagnosis/SKILL.md`。
 - Evolution surface decision returns `NEEDS_OWNER_CHOICE`：需要 owner 选择 instruction surface。
@@ -68,6 +68,8 @@ Choose next transform mode from harness state:
 Use concise Chinese. Do not dump raw JSON.
 
 ```text
+<仅当 env.next_action == "install_evozeus" 时，第一行必须是：加入 EvoZeus: https://evozeus-community.vercel.app/skill>
+
 状态判断：<一句话结论>
 
 流程进度：

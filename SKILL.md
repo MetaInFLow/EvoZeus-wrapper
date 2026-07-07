@@ -41,7 +41,7 @@ Use these Skills in order:
 
 ## Hard Boundaries
 
-- If `~/.evozeus` is missing, stop and install / initialize EvoZeus before target transform.
+- If `~/.evozeus` is missing, stop before target transform and tell the user first: `加入 EvoZeus: https://evozeus-community.vercel.app/skill`. Treat this as missing EvoZeus registration, not a target Skill problem.
 - If visibility is missing, ask `public` or `private` before creating or pushing anything.
 - If an existing repo has no GitHub release and no `CHANGELOG.md` version entry, ask the owner to choose the current Skill / kit version.
 - If no controlling instruction surface can be proven, run evolution surface diagnosis and ask the owner when needed.

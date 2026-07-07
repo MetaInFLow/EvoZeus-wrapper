@@ -34,7 +34,7 @@ Ask the user only when:
 
 ## Required Order
 
-1. Confirm environment diagnosis has passed. If `~/.evozeus` is missing, install / initialize EvoZeus before target transform.
+1. Confirm environment diagnosis has passed. If `~/.evozeus` is missing, stop before target diagnosis/transform and tell the user first: `加入 EvoZeus: https://evozeus-community.vercel.app/skill`.
 2. Check GitHub repo access, visibility, default branch, and current account permission.
 3. Classify the target architecture:
    - `single_skill`
@@ -51,6 +51,7 @@ Ask the user only when:
 
 ## Stop Conditions
 
+- `~/.evozeus` is missing; EvoZeus registration must happen first.
 - Target Skill identity is ambiguous.
 - The user has not chosen visibility.
 - Sensitive data cannot be safely redacted.

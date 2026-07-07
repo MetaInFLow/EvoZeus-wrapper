@@ -25,7 +25,7 @@ environment diagnosis
 | 阶段 | 文件和能力 |
 | --- | --- |
 | Before | 本地 Skill 文件夹，至少包含 `SKILL.md` |
-| After | canonical GitHub repo、GitHub Pages、`.evozeus/wrapper.json`、`CHANGELOG.md`、Issue template、PR template、design doc template、preflight checker、runtime symlink |
+| After | canonical GitHub repo、GitHub Pages、`.evozeus/wrapper.json`、`.evozeus/feedback-policy.json`、`.evozeus/audit-rule.md`、`CHANGELOG.md`、Issue template、PR template、design doc template、preflight checker、runtime symlink |
 
 ## Single Source Contract
 
@@ -59,6 +59,7 @@ wrapper-managed Skill 的源头发现顺序固定，不允许跳过：
 | --- | --- |
 | 用户在哪里看这个 Skill 的当前状态？ | `docs/index.md` + GitHub Pages |
 | 使用中结果不满意怎么反馈？ | `.github/ISSUE_TEMPLATE/skill-feedback.yml` |
+| 是否需要沉淀经验怎么判断？ | `.evozeus/audit-rule.md` + `.evozeus/feedback-policy.json` |
 | 修改 Skill 前怎么想清楚？ | `docs/design-doc-template.md` + `docs/designs/*.md` |
 | 每次迭代怎么留下记录？ | `CHANGELOG.md` |
 | wrapper harness 怎么迁移？ | `docs/wrapper-migrations/` + `.evozeus/wrapper.json` |
@@ -85,6 +86,43 @@ wrapper-managed Skill 的源头发现顺序固定，不允许跳过：
 3. PR：引用 design doc，更新 `SKILL.md` 和 `CHANGELOG.md`。
 4. Release：tag 与 `CHANGELOG.md` 对齐，release description 非空。
 
+## Feedback Audit Contract
+
+每个 wrapped Skill 必须带一个可配置反馈审计 harness，用来区分“当前任务继续做”和“经验需要沉淀”：
+
+1. `.evozeus/feedback-policy.json` 定义托管模式、严格等级、已上传经验的证据正则和 issue 路由规则。
+2. `.evozeus/audit-rule.md` 定义语义审计要求。hook 或 agent 必须用当前用户输入和必要上下文套用该规则，返回 `should_capture`、`reason`、`route`、`severity`、`evidence_boundary`。
+3. Turn-end hook 先用 `capture_evidence_regex` 检查本轮是否已经创建 Issue、lesson 或等价经验记录；命中则放行。
+4. 未命中时进入 audit。audit 结果为 false 时放行；结果为 true 时按托管模式处理：
+   - `full_managed`：直接创建对应 Issue。
+   - `semi_managed`：dry-run 提示用户是否上交。
+   - `manual`：只报告，不自动提交。
+5. `route` 决定 issue 归属：
+   - `target_skill`：当前 Skill repo。
+   - `wrapper`：`MetaInFLow/EvoZeus-wrapper`。
+   - `both`：两边都建，并互相关联。
+   - `none`：不建。
+
+## Start Hook Contract
+
+启动目标 Skill 前，hook 必须先检查 wrapper harness 版本，而不是只依赖 instruction surface 里的文字提醒。
+
+```bash
+python3 scripts/evozeus_wrapper.py hook start-check \
+  --target /absolute/path/to/skill \
+  --latest-version <latest-wrapper-version> \
+  --enforcement advisory \
+  --json
+```
+
+返回 `decision.level`：
+
+- `allow`：harness 可用，继续启动。
+- `warn`：非破坏性 harness 更新可用；`advisory` 模式下继续启动，但应创建升级 PR。
+- `block`：缺 manifest、缺 latest version、major upgrade、managed files dirty，或 `strict` 模式下发现任何可升级版本；停止进入目标 Skill 主链路。
+
+`hook start-check` 只读并返回决策，不写目标 Skill。升级仍走 `harness upgrade-check` / `harness upgrade --dry-run` / PR / release。
+
 ## Preflight Contract
 
 `scripts/evozeus_wrapper_preflight.py` 至少支持五类检查：
@@ -104,7 +142,9 @@ python3 scripts/evozeus_wrapper.py env diagnose --json
 python3 scripts/evozeus_wrapper.py skill diagnose --target /absolute/path/to/skill --repo OWNER/REPO --json
 python3 scripts/evozeus_wrapper.py skill transform --mode bootstrap --target /absolute/path/to/skill --repo OWNER/REPO --visibility private --dry-run --json
 python3 scripts/evozeus_wrapper.py publish reinstall --skill-name skill-name --canonical-path /absolute/path/to/repo --target codex --dry-run --json
+python3 scripts/evozeus_wrapper.py hook start-check --target /absolute/path/to/skill --latest-version v0.5.0 --json
 python3 scripts/evozeus_wrapper.py loop lesson --dry-run --json
+python3 scripts/evozeus_wrapper.py loop audit --target /absolute/path/to/skill --user-input "..." --json
 python3 scripts/evozeus_wrapper.py loop issue-to-pr --dry-run --json
 python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --latest-version v0.4.0 --json
 python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.4.0 --dry-run --json

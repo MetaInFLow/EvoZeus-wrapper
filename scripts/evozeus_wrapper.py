@@ -13,6 +13,8 @@ from evozeus_wrapper_lifecycle import (
     diagnose_skill,
     plan_reinstall,
     plan_harness_upgrade,
+    plan_harness_start_check,
+    plan_feedback_audit,
     classify_pr_permission,
     run_command,
     stage_label,
@@ -65,11 +67,30 @@ def main() -> int:
     reinstall.add_argument("--dry-run", action="store_true", help="Only print planned reinstall actions.")
     reinstall.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
 
+    hook = sub.add_parser("hook", help="Runtime hook checks.")
+    hook_sub = hook.add_subparsers(dest="command", required=True)
+    start_check = hook_sub.add_parser("start-check", help="Check wrapper harness version before running a target.")
+    start_check.add_argument("--target", required=True, help="Path to wrapped target Skill or kit.")
+    start_check.add_argument("--latest-version", required=True, help="Latest EvoZeus-wrapper harness version, such as v0.5.0.")
+    start_check.add_argument("--managed-dirty", action="store_true")
+    start_check.add_argument("--enforcement", choices=["advisory", "strict"], default="advisory")
+    start_check.add_argument("--json", action="store_true")
+
     loop = sub.add_parser("loop", help="Continuous evolution loop commands.")
     loop_sub = loop.add_subparsers(dest="command", required=True)
     lesson = loop_sub.add_parser("lesson", help="Plan lesson candidate intake.")
     lesson.add_argument("--dry-run", action="store_true", help="Only print next action.")
     lesson.add_argument("--json", action="store_true")
+    audit = loop_sub.add_parser("audit", help="Audit whether current feedback should be captured.")
+    audit.add_argument("--target", required=True, help="Path to wrapped target Skill or kit.")
+    audit.add_argument("--user-input", required=True, help="Current user input to audit.")
+    audit.add_argument("--context", default="", help="Recent redacted context for semantic audit.")
+    audit.add_argument("--capture-log", default="", help="Text to scan for existing capture evidence.")
+    audit.add_argument(
+        "--audit-json",
+        help="Optional JSON judgment produced by applying .evozeus/audit-rule.md to the current input.",
+    )
+    audit.add_argument("--json", action="store_true")
     issue_to_pr = loop_sub.add_parser("issue-to-pr", help="Plan Issue-to-PR flow.")
     issue_to_pr.add_argument("--write-permission", action="store_true")
     issue_to_pr.add_argument("--fork-permission", action="store_true")
@@ -172,6 +193,15 @@ def main() -> int:
         report = plan_reinstall(args.skill_name, Path(args.canonical_path), Path.home(), args.target)
         print_report(report, args.json, "publish")
         return 0
+    if args.group == "hook" and args.command == "start-check":
+        report = plan_harness_start_check(
+            target=Path(args.target),
+            latest_version=args.latest_version,
+            managed_dirty=args.managed_dirty,
+            enforcement=args.enforcement,
+        )
+        print_report(report, args.json, "loop")
+        return 0
     if args.group == "loop" and args.command == "lesson":
         if not args.dry_run:
             print("lesson submission requires explicit confirmation and is not implemented in this command yet", file=sys.stderr)
@@ -182,6 +212,26 @@ def main() -> int:
             "writes": False,
             "next_action": "ask_user_whether_to_submit_lesson",
         }
+        print_report(report, args.json, "loop")
+        return 0
+    if args.group == "loop" and args.command == "audit":
+        audit_judgment = None
+        if args.audit_json:
+            try:
+                audit_judgment = json.loads(args.audit_json)
+            except json.JSONDecodeError as error:
+                print(f"--audit-json is not valid JSON: {error}", file=sys.stderr)
+                return 2
+            if not isinstance(audit_judgment, dict):
+                print("--audit-json must decode to an object", file=sys.stderr)
+                return 2
+        report = plan_feedback_audit(
+            target=Path(args.target),
+            user_input=args.user_input,
+            context=args.context,
+            capture_log=args.capture_log,
+            audit_judgment=audit_judgment,
+        )
         print_report(report, args.json, "loop")
         return 0
     if args.group == "loop" and args.command == "issue-to-pr":
