@@ -17,6 +17,8 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 | 当前 Skill 版本 | `{{CURRENT_VERSION}}` |
 | Wrapper harness 版本 | `{{WRAPPER_VERSION}}` |
 | Wrapper manifest | `.evozeus_evoinfra/wrapper.json` |
+| Codex hook registration | `.codex/hooks.json` |
+| Codex hook adapter | `.codex/hooks/evozeus_wrapper_start_check.py` |
 | Wrapper migrations | [`docs/wrapper-migrations/`](wrapper-migrations/) |
 | Changelog | [`CHANGELOG.md`]({{REPO_URL}}/blob/main/CHANGELOG.md) |
 | Design docs | [`docs/designs/`](designs/) |
@@ -33,16 +35,16 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 
 ## 进化规则
 
-`SKILL.md` 的 frontmatter 后第一段必须是 `EvoZeus-wrapper 状态检查`。该状态检查先确认当前 Skill release、wrapper harness version 和 source contract；全部 OK 后，才进入目标 Skill 原本主链路。
+`SKILL.md` 的 frontmatter 后第一段必须是 `EvoZeus-wrapper 状态检查`。该状态检查先确认当前 Skill release、wrapper harness version 和 source contract；如果当前只是 runtime-only install，不能把安装副本当作事实源，应回 canonical repo 处理维护问题。
 
 `.evozeus_evoinfra/wrapper.json` 的 `integration.mode` 说明当前运行时集成等级：
 
-- `native_host_hook`：宿主或插件 lifecycle hook 已安装，有 hook 文件和 plugin manifest 证据。
+- `native_host_hook`：Codex project-local hook 已注册在 `.codex/hooks.json`，或其他宿主/plugin lifecycle hook 已安装并有证据。
 - `bootstrap_skill`：插件 Skill 基础设施可加载控制 Skill，但没有检测到宿主 lifecycle hook。
 - `prompt_runtime_check`：靠 `SKILL.md` / `AGENTS.md` 说明要求 agent 执行检查，不是真 hook。
 - `manual_only`：只能手动运行 wrapper 命令。
 
-不要把 `python3 scripts/evozeus_wrapper.py hook start-check ...` 这类手动命令描述为宿主级 hook，除非 `integration.mode=native_host_hook`。
+Codex 会从 trusted `.codex/` layer 发现 project-local hook；新建或变更 hook 后，需要通过 `/hooks` 审核并信任。运行时可用 `EVOZEUS_WRAPPER_LATEST_VERSION=vMAJOR.MINOR.PATCH` 强制检查最新 wrapper 版本；用 `EVOZEUS_WRAPPER_HOOK_ENFORCEMENT=strict` 可以在任何可升级版本存在时阻断 wrapper-managed 执行。
 
 Wrapper-managed Skill 的源头发现顺序固定：
 

@@ -33,14 +33,14 @@ Wrapper 不能把所有启动检查都叫作 hook。`.evozeus_evoinfra/wrapper.j
 
 | mode | 含义 |
 | --- | --- |
-| `native_host_hook` | 宿主或插件 lifecycle hook 会自动触发，且 repo 中有 hook 文件和 plugin manifest 证据。 |
+| `native_host_hook` | Codex project-local hook 已注册在 `.codex/hooks.json` 并有 `.codex/hooks/evozeus_wrapper_start_check.py` 适配器，或其他宿主/plugin lifecycle hook 有可验证证据。 |
 | `bootstrap_skill` | 插件/Skill 基础设施可加载控制 Skill，但没有检测到宿主 lifecycle hook 文件。 |
 | `prompt_runtime_check` | `SKILL.md` 或 `AGENTS.md` 要求 agent 运行检查；这是 prompt-compliance fallback，不是真 hook。 |
 | `manual_only` | 只能手动运行 wrapper 命令；没有可检测的运行时入口。 |
 
-`python3 scripts/evozeus_wrapper.py hook start-check ...` 这类 wrapper CLI 命令不是 runtime hook。只有当 `native_host_hook` 或其他宿主集成自动调用它时，才能被描述为 hook-backed execution。
+`python3 scripts/evozeus_wrapper.py hook start-check ...` 这类 wrapper CLI 命令不是 runtime hook。只有当 Codex `.codex/hooks.json` 或其他宿主集成自动调用它时，才能被描述为 hook-backed execution。
 
-Preflight 必须阻止能力夸大：如果 manifest 声称 `integration.mode=native_host_hook`，但缺少 hook 文件或 plugin manifest，结构检查必须失败。
+Preflight 必须阻止能力夸大：如果 manifest 声称 `integration.mode=native_host_hook`，但缺少 Codex project-local hook 文件，也缺少其他宿主/plugin lifecycle hook 证据，结构检查必须失败。
 
 ## Single Source Contract
 
@@ -122,8 +122,8 @@ python3 scripts/evozeus_wrapper.py publish reinstall --skill-name skill-name --c
 python3 scripts/evozeus_wrapper.py loop lesson --dry-run --json
 python3 scripts/evozeus_wrapper.py loop audit --target /absolute/path/to/skill --user-input "<input>" --json
 python3 scripts/evozeus_wrapper.py loop issue-to-pr --dry-run --json
-python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --latest-version v0.6.0 --json
-python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.6.0 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --latest-version v0.7.0 --json
+python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.7.0 --dry-run --json
 ```
 
 `loop audit` 默认不写 GitHub；它输出 `should_capture`、`route`、`severity`、脱敏 Issue body 和可执行的 `gh issue create` 命令。写入、发布、替换安装副本、创建 Issue、创建 PR、启用 Pages 都必须在诊断报告之后进入用户确认。
@@ -138,7 +138,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/sk
 - wrapper major upgrade 必须用户确认。
 - wrapper upgrade 只能改 harness-managed files，不改目标 Skill 业务规则。
 - wrapper upgrade 必须生成迁移方案，说明 from/to wrapper version、planned files、`SKILL.md` 状态检查动作、append-only 动作、验证命令和回滚方案。
-- 目标 `SKILL.md` 的 frontmatter 后必须先出现 `EvoZeus-wrapper 状态检查`，列出当前 Skill release、wrapper harness version、source contract 检查和对应解决方法；全部 OK 后才进入原 Skill 主链路。
+- 目标 `SKILL.md` 的 frontmatter 后必须先出现 `EvoZeus-wrapper 状态检查`，列出当前 Skill release、wrapper harness version、source contract 检查和对应解决方法；如果当前只是 runtime-only install，不能把安装副本当作事实源，应回 canonical repo 处理维护问题。
 - 目标 `SKILL.md` 中的 `EvoZeus-wrapper` 区域只能追加或补缺；如果已经存在，升级时追加 migration note，不改写旧业务段落。
 - `docs/wrapper-migrations/` 是 wrapper harness 迁移账本；`CHANGELOG.md` 仍主要记录目标 Skill 行为 release，除非 wrapper 迁移同时改变了 Skill 行为。
 

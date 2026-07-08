@@ -29,12 +29,18 @@ TARGET_FEEDBACK_POLICY = f"{TARGET_EVOINFRA_DIR}/feedback-policy.json"
 TARGET_AUDIT_RULE = f"{TARGET_EVOINFRA_DIR}/audit-rule.md"
 LEGACY_TARGET_FEEDBACK_POLICY = f"{LEGACY_TARGET_EVOINFRA_DIR}/feedback-policy.json"
 LEGACY_TARGET_AUDIT_RULE = f"{LEGACY_TARGET_EVOINFRA_DIR}/audit-rule.md"
+CODEX_HOOKS_CONFIG = ".codex/hooks.json"
+CODEX_START_HOOK_SCRIPT = ".codex/hooks/evozeus_wrapper_start_check.py"
+CODEX_START_HOOK_EVENT = "SessionStart"
+CODEX_START_HOOK_MATCHER = "startup|resume|clear|compact"
 
 REQUIRED_WRAPPER_FILES = [
     "CHANGELOG.md",
     "WRAPPER.md",
     TARGET_FEEDBACK_POLICY,
     TARGET_AUDIT_RULE,
+    CODEX_HOOKS_CONFIG,
+    CODEX_START_HOOK_SCRIPT,
     "docs/index.md",
     "docs/_config.yml",
     "docs/design-doc-template.md",
@@ -51,6 +57,8 @@ WRAPPER_MANAGED_FILES = [
     "WRAPPER.md",
     TARGET_FEEDBACK_POLICY,
     TARGET_AUDIT_RULE,
+    CODEX_HOOKS_CONFIG,
+    CODEX_START_HOOK_SCRIPT,
     "docs/index.md",
     "docs/_config.yml",
     "docs/design-doc-template.md",
@@ -586,14 +594,22 @@ def plugin_manifest_files(target: Path) -> list[str]:
 
 
 def hook_files(target: Path) -> list[str]:
+    hooks = existing_relative_files(
+        target,
+        [
+            CODEX_HOOKS_CONFIG,
+            ".codex/config.toml",
+            CODEX_START_HOOK_SCRIPT,
+        ],
+    )
     hooks_dir = target / "hooks"
-    if not hooks_dir.is_dir():
-        return []
-    return [
-        str(path.relative_to(target))
-        for path in sorted(hooks_dir.iterdir())
-        if path.is_file()
-    ]
+    if hooks_dir.is_dir():
+        hooks.extend(
+            str(path.relative_to(target))
+            for path in sorted(hooks_dir.iterdir())
+            if path.is_file()
+        )
+    return list(dict.fromkeys(hooks))
 
 
 def classify_integration_mode(
@@ -603,7 +619,12 @@ def classify_integration_mode(
     plugin_manifests: list[str],
     skill_entries: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    if hook_files and plugin_manifests and skill_entries:
+    codex_project_hook = CODEX_HOOKS_CONFIG in hook_files and CODEX_START_HOOK_SCRIPT in hook_files
+    plugin_lifecycle_hook = bool(hook_files and plugin_manifests and skill_entries)
+    if codex_project_hook:
+        mode = "native_host_hook"
+        description = "Codex project-local SessionStart hook is registered under .codex/hooks.json."
+    elif plugin_lifecycle_hook:
         mode = "native_host_hook"
         description = "Host/plugin lifecycle hooks are present and can load a control Skill."
     elif plugin_manifests and skill_entries:
@@ -619,6 +640,8 @@ def classify_integration_mode(
     return {
         "mode": mode,
         "native_host_hook_installed": mode == "native_host_hook",
+        "codex_project_hook": codex_project_hook,
+        "plugin_lifecycle_hook": plugin_lifecycle_hook,
         "manual_wrapper_command": "not_runtime_integration",
         "target_kind": target_kind,
         "root_entry": root_entry,
@@ -1159,6 +1182,9 @@ def build_wrapper_manifest(
     instruction_surface: str | None = None,
     integration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    default_hook_files = []
+    if CODEX_HOOKS_CONFIG in managed_files and CODEX_START_HOOK_SCRIPT in managed_files:
+        default_hook_files = [CODEX_HOOKS_CONFIG, CODEX_START_HOOK_SCRIPT]
     manifest = {
         "wrapper_repo": WRAPPER_REPO,
         "wrapper_version": wrapper_version,
@@ -1168,11 +1194,22 @@ def build_wrapper_manifest(
         "canonical_repo": repo,
         "managed_files": managed_files,
         "install_links": install_links,
+        "hook_registration": {
+            "codex": {
+                "config_file": CODEX_HOOKS_CONFIG,
+                "hook_script": CODEX_START_HOOK_SCRIPT,
+                "event": CODEX_START_HOOK_EVENT,
+                "matcher": CODEX_START_HOOK_MATCHER,
+                "trust_review": "required_by_codex_hooks",
+                "latest_version_env": "EVOZEUS_WRAPPER_LATEST_VERSION",
+                "enforcement_env": "EVOZEUS_WRAPPER_HOOK_ENFORCEMENT",
+            },
+        },
         "integration": integration
         or classify_integration_mode(
             target_kind="single_skill",
             root_entry=instruction_surface or "SKILL.md",
-            hook_files=[],
+            hook_files=default_hook_files,
             plugin_manifests=[],
             skill_entries=[],
         ),
@@ -1694,9 +1731,9 @@ def plan_harness_upgrade(
         ),
         "integration": integration,
         "integration_policy": (
-            "native_host_hook means a host/plugin lifecycle hook is installed; bootstrap_skill means plugin skill "
-            "infrastructure can load a control Skill; prompt_runtime_check is prompt-compliance fallback; manual "
-            "wrapper commands are not runtime hooks"
+            "native_host_hook means Codex project-local hooks or another host/plugin lifecycle hook is installed; "
+            "bootstrap_skill means plugin skill infrastructure can load a control Skill; prompt_runtime_check is "
+            "prompt-compliance fallback; manual wrapper commands are not runtime hooks"
         ),
         "skill_md_policy": (
             "single Skill targets use SKILL.md; AGENTS.md-root targets use AGENTS.md; hook-controlled bundles use the hook-loaded control Skill"

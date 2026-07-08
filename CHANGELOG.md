@@ -6,6 +6,26 @@ All notable changes to EvoZeus-wrapper are recorded here.
 
 - None yet.
 
+## [v0.7.0] - 2026-07-08
+
+### Added
+
+- Added official Codex project-local hook registration to wrapped target harnesses via `.codex/hooks.json`.
+- Added the `SessionStart` wrapper adapter at `.codex/hooks/evozeus_wrapper_start_check.py`.
+- Recorded Codex hook registration metadata in `.evozeus_evoinfra/wrapper.json`.
+
+### Changed
+
+- Treat complete Codex project-local hook files as `native_host_hook` evidence without requiring a plugin manifest.
+- Updated preflight validation, harness upgrade planning, templates, and docs to distinguish official Codex hooks from wrapper CLI commands.
+- Bumped the generated wrapper harness version to `v0.7.0`.
+
+### Verification
+
+- `python3 -m unittest tests.test_evozeus_wrapper_lifecycle -v`
+- `python3 -m py_compile scripts/evozeus_wrapper_lifecycle.py scripts/evozeus_wrapper_preflight.py scripts/evozeus_wrapper_bootstrap.py templates/target/.codex/hooks/evozeus_wrapper_start_check.py`
+- `python3 scripts/evozeus_wrapper.py skill transform --mode bootstrap --target examples/minimal-static-skill --repo MetaInFLow/minimal-static-skill --visibility private --dry-run --json`
+
 ## [v0.6.0] - 2026-07-07
 
 ### Changed

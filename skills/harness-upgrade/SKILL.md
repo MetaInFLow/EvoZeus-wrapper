@@ -11,7 +11,7 @@ Use this stage to keep target Skill infrastructure aligned with `MetaInFLow/EvoZ
 
 ```bash
 python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --json
-python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.3.0 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.7.0 --dry-run --json
 ```
 
 ## Rules
@@ -19,6 +19,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/sk
 - Skill release version and wrapper harness version are separate axes.
 - Only update harness-managed files.
 - Do not touch target Skill business rules.
+- Preserve or install Codex project-local hook registration under `.codex/hooks.json` and `.codex/hooks/evozeus_wrapper_start_check.py`.
 - `SKILL.md` must start, after frontmatter, with `EvoZeus-wrapper 状态检查` before the target Skill's main chain.
 - Other `SKILL.md` changes are append-only: add the `EvoZeus-wrapper` section if missing, otherwise append a migration note.
 - Record every wrapper migration under `docs/wrapper-migrations/` with from/to wrapper version, planned files, validation, and rollback.
@@ -28,4 +29,4 @@ python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/sk
 ## Stop Conditions
 
 - `.evozeus_evoinfra/wrapper.json` is missing and the user has not approved repair.
-- Managed files have local edits and no merge strategy exists.
+- Managed files, including `.codex/hooks.json` or `.codex/hooks/evozeus_wrapper_start_check.py`, have local edits and no merge strategy exists.

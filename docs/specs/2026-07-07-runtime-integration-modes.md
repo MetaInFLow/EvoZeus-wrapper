@@ -8,7 +8,7 @@
 
 EvoZeus-wrapper used the word `hook` for multiple mechanisms:
 
-- host-native lifecycle hooks that run automatically;
+- Codex project-local hooks or host-native lifecycle hooks that run automatically;
 - wrapper CLI commands such as `hook start-check`;
 - prompt-level runtime checks written into `SKILL.md`.
 
@@ -20,7 +20,7 @@ Record the actual integration level in `.evozeus_evoinfra/wrapper.json` and expo
 
 Supported modes:
 
-- `native_host_hook`: host/plugin lifecycle hook files and plugin manifests are present.
+- `native_host_hook`: Codex project-local hooks are registered in `.codex/hooks.json` with the wrapper adapter, or other host/plugin lifecycle hook evidence is present.
 - `bootstrap_skill`: plugin skill infrastructure is present, but no host hook files are detected.
 - `prompt_runtime_check`: a root instruction surface can ask the agent to run checks; this is prompt-compliance fallback.
 - `manual_only`: no runtime instruction surface or host integration is detected.
@@ -31,15 +31,15 @@ Wrapper CLI commands are not runtime hooks unless a host integration calls them.
 
 - Add `classify_integration_mode` to lifecycle diagnosis.
 - Include `integration` in target architecture, target diagnosis, wrapper manifests, and harness upgrade plans.
-- Add preflight validation that fails if a manifest claims `native_host_hook` without hook and plugin manifest evidence.
+- Add preflight validation that fails if a manifest claims `native_host_hook` without Codex project-local hook files or other host/plugin lifecycle hook evidence.
 - Update docs and templates to say `integration.mode` instead of treating all checks as hooks.
 
 ## Verification Plan
 
-- Unit tests cover single Skill, hook/plugin bundle, and Codex plugin with `hooks: {}`.
+- Unit tests cover single Skill, hook/plugin bundle, Codex project-local hooks, and Codex plugin with `hooks: {}`.
 - Run `python3 -m unittest tests/test_evozeus_wrapper_lifecycle.py`.
 - Run `scripts/evozeus_wrapper.py skill diagnose` against representative targets and inspect `integration.mode`.
 
 ## Release Plan
 
-This is a wrapper harness behavior change. The next wrapper release should mention that hook semantics are now explicit and verifiable.
+This is a wrapper harness behavior change. The next wrapper release should mention that hook semantics are now explicit, verifiable, and aligned with Codex project-local hooks.

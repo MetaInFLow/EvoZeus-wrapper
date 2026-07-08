@@ -18,6 +18,8 @@ TARGET_WRAPPER_MANIFEST = f"{TARGET_EVOINFRA_DIR}/wrapper.json"
 LEGACY_TARGET_WRAPPER_MANIFEST = f"{LEGACY_TARGET_EVOINFRA_DIR}/wrapper.json"
 TARGET_FEEDBACK_POLICY = f"{TARGET_EVOINFRA_DIR}/feedback-policy.json"
 TARGET_AUDIT_RULE = f"{TARGET_EVOINFRA_DIR}/audit-rule.md"
+CODEX_HOOKS_CONFIG = ".codex/hooks.json"
+CODEX_START_HOOK_SCRIPT = ".codex/hooks/evozeus_wrapper_start_check.py"
 
 REQUIRED_FILES = [
     "CHANGELOG.md",
@@ -25,6 +27,8 @@ REQUIRED_FILES = [
     TARGET_WRAPPER_MANIFEST,
     TARGET_FEEDBACK_POLICY,
     TARGET_AUDIT_RULE,
+    CODEX_HOOKS_CONFIG,
+    CODEX_START_HOOK_SCRIPT,
     "docs/index.md",
     "docs/_config.yml",
     "docs/design-doc-template.md",
@@ -225,14 +229,23 @@ def project_pointer_path(repo: str) -> Path:
 
 
 def detected_hook_files(target: Path) -> list[str]:
-    hooks_dir = target / "hooks"
-    if not hooks_dir.is_dir():
-        return []
-    return [
-        str(path.relative_to(target))
-        for path in sorted(hooks_dir.iterdir())
-        if path.is_file()
+    hooks = [
+        path
+        for path in [
+            CODEX_HOOKS_CONFIG,
+            ".codex/config.toml",
+            CODEX_START_HOOK_SCRIPT,
+        ]
+        if (target / path).is_file()
     ]
+    hooks_dir = target / "hooks"
+    if hooks_dir.is_dir():
+        hooks.extend(
+            str(path.relative_to(target))
+            for path in sorted(hooks_dir.iterdir())
+            if path.is_file()
+        )
+    return list(dict.fromkeys(hooks))
 
 
 def detected_plugin_manifests(target: Path) -> list[str]:
@@ -249,7 +262,9 @@ def check_integration_contract(target: Path, manifest: dict | None) -> None:
     if mode == "native_host_hook":
         hooks = detected_hook_files(target)
         plugins = detected_plugin_manifests(target)
-        if not hooks or not plugins:
+        codex_project_hook = CODEX_HOOKS_CONFIG in hooks and CODEX_START_HOOK_SCRIPT in hooks
+        plugin_lifecycle_hook = bool(hooks and plugins)
+        if not codex_project_hook and not plugin_lifecycle_hook:
             fail(
                 "integration.mode is native_host_hook but host hook evidence is missing: "
                 f"hooks={hooks or 'none'}, plugin_manifests={plugins or 'none'}"

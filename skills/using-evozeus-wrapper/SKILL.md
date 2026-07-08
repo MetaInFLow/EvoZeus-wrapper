@@ -103,6 +103,7 @@ The diagnosis script reports facts only:
 - `skills/*/SKILL.md` inventory
 - evolution surface candidates and controller files
 - runtime integration mode: `native_host_hook`, `bootstrap_skill`, `prompt_runtime_check`, or `manual_only`
+- Codex hook registration evidence from `.codex/hooks.json` and `.codex/hooks/evozeus_wrapper_start_check.py`
 - wrapper component gaps
 - source contract and runtime install state
 
@@ -122,7 +123,7 @@ Browse the whole target repo enough to prove what controls agent behavior:
 
 Choose `instruction_surface` only from repo evidence. For hook/plugin-controlled systems, pass the chosen relative path into transform with `--instruction-surface`.
 
-Do not call a wrapper CLI command a runtime hook. `native_host_hook` requires host/plugin lifecycle hook evidence. `prompt_runtime_check` is only prompt-compliance fallback.
+Do not call a wrapper CLI command a runtime hook. `native_host_hook` requires Codex project-local hook files or other host/plugin lifecycle hook evidence. `prompt_runtime_check` is only prompt-compliance fallback.
 
 ### 4. Status Assessment
 
@@ -205,17 +206,23 @@ Use `skills/harness-upgrade/SKILL.md`.
 ```bash
 python3 scripts/evozeus_wrapper.py harness upgrade-check \
   --target /absolute/path/to/target-skill-or-kit \
-  --latest-version v0.4.0 \
+  --latest-version v0.7.0 \
   --json
 
 python3 scripts/evozeus_wrapper.py harness upgrade \
   --target /absolute/path/to/target-skill-or-kit \
-  --latest-version v0.4.0 \
+  --latest-version v0.7.0 \
   --dry-run \
   --json
 ```
 
 Wrapper migration updates wrapper-managed files and migration records only. It must not rewrite target Skill or runtime business logic.
+
+For wrapper `v0.7.0+`, the target harness must include Codex project-local hook registration:
+
+- `.codex/hooks.json` registers `SessionStart` for `startup|resume|clear|compact`.
+- `.codex/hooks/evozeus_wrapper_start_check.py` reads `.evozeus_evoinfra/wrapper.json` and emits Codex hook JSON.
+- Non-managed hooks require Codex review/trust through `/hooks` before they run.
 
 ## GitHub Operations
 

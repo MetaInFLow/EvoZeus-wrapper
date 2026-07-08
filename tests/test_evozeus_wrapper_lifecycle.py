@@ -1,6 +1,9 @@
 import contextlib
 import io
 import json
+import os
+import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 import tempfile
@@ -103,6 +106,39 @@ class LifecycleBasicsTest(unittest.TestCase):
         self.assertIn("Use this Skill as the operating guide for EvoZeus-wrapper.", text)
         self.assertIn("Do not treat script-produced `evolution_surface.candidates` as final placement.", text)
         self.assertNotIn("TODO", text)
+
+    def test_codex_hook_template_uses_official_project_hooks_location(self):
+        hooks_path = Path("templates/target/.codex/hooks.json")
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+
+        session_start = hooks["hooks"]["SessionStart"][0]
+        handler = session_start["hooks"][0]
+
+        self.assertEqual(session_start["matcher"], "startup|resume|clear|compact")
+        self.assertEqual(handler["type"], "command")
+        self.assertIn("$(git rev-parse --show-toplevel)/.codex/hooks/evozeus_wrapper_start_check.py", handler["command"])
+        self.assertEqual(handler["statusMessage"], "Checking EvoZeus wrapper harness")
+        self.assertFalse(Path("templates/target/hooks/hooks-codex.json").exists())
+
+    def test_bootstrap_status_language_is_runtime_safe(self):
+        checked_files = [
+            Path("scripts/evozeus_wrapper_bootstrap.py"),
+            Path("templates/target/WRAPPER.md"),
+            Path("templates/target/docs/index.md"),
+        ]
+        blocked_phrases = [
+            "Continue to the target Skill's main flow only after all three are OK.",
+            "全部 OK 后",
+            "只有检查结果为 OK",
+            "才继续进入目标 Skill 原本主链路",
+            "才继续进入下方原 Skill 流程",
+        ]
+
+        for path in checked_files:
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("runtime-only install", text)
+            for phrase in blocked_phrases:
+                self.assertNotIn(phrase, text)
 
     def test_preflight_root_entry_path_uses_manifest_instruction_surface(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -277,6 +313,21 @@ class LifecycleBasicsTest(unittest.TestCase):
             (target / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
             (target / "hooks").mkdir()
             (target / "hooks" / "hooks.json").write_text("{}", encoding="utf-8")
+            manifest = {"integration": {"mode": "native_host_hook"}}
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                check_integration_contract(target, manifest)
+
+    def test_preflight_accepts_native_codex_project_hook_without_plugin_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "wrapped-skill"
+            target.mkdir()
+            (target / ".codex" / "hooks").mkdir(parents=True)
+            (target / ".codex" / "hooks.json").write_text('{"hooks":{}}', encoding="utf-8")
+            (target / ".codex" / "hooks" / "evozeus_wrapper_start_check.py").write_text(
+                "#!/usr/bin/env python3\n",
+                encoding="utf-8",
+            )
             manifest = {"integration": {"mode": "native_host_hook"}}
 
             with contextlib.redirect_stdout(io.StringIO()):
@@ -618,6 +669,24 @@ class WrapperManifestTest(unittest.TestCase):
             self.assertEqual(loaded["install_links"], ["/Users/anthonyf/.codex/skills/resume-screening"])
             self.assertEqual(loaded["integration"]["mode"], "prompt_runtime_check")
             self.assertFalse(loaded["integration"]["native_host_hook_installed"])
+            self.assertEqual(loaded["hook_registration"]["codex"]["config_file"], ".codex/hooks.json")
+            self.assertEqual(
+                loaded["hook_registration"]["codex"]["hook_script"],
+                ".codex/hooks/evozeus_wrapper_start_check.py",
+            )
+
+    def test_build_wrapper_manifest_records_codex_hook_registration_for_complete_harness(self):
+        manifest = build_wrapper_manifest(
+            "MetaInFLow/skill",
+            "v0.7.0",
+            ["WRAPPER.md", ".codex/hooks.json", ".codex/hooks/evozeus_wrapper_start_check.py"],
+            [],
+        )
+
+        self.assertEqual(manifest["integration"]["mode"], "native_host_hook")
+        self.assertTrue(manifest["integration"]["native_host_hook_installed"])
+        self.assertTrue(manifest["integration"]["codex_project_hook"])
+        self.assertEqual(manifest["hook_registration"]["codex"]["event"], "SessionStart")
 
     def test_write_wrapper_manifest_skips_existing_without_force(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -871,6 +940,8 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertIn("SKILL.md EvoZeus-wrapper section or migration note (append only)", plan["planned_files"])
             self.assertIn("docs/wrapper-migrations/README.md", plan["planned_files"])
             self.assertIn(".evozeus_evoinfra/wrapper.json", plan["planned_files"])
+            self.assertIn(".codex/hooks.json", plan["planned_files"])
+            self.assertIn(".codex/hooks/evozeus_wrapper_start_check.py", plan["planned_files"])
 
     def test_plan_harness_upgrade_requires_repair_when_manifest_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -948,6 +1019,52 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
                 plan["planned_files"],
             )
             self.assertIn("skills/session-bootstrap/SKILL.md", plan["evolution_surface_policy"])
+
+    def test_codex_session_start_hook_adapter_reads_target_evoinfra_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.6.0", ["WRAPPER.md"], []),
+            )
+            hook_dir = target / ".codex" / "hooks"
+            hook_dir.mkdir(parents=True)
+            template = Path("templates/target/.codex/hooks/evozeus_wrapper_start_check.py").read_text(
+                encoding="utf-8"
+            )
+            adapter = hook_dir / "evozeus_wrapper_start_check.py"
+            adapter.write_text(template.replace("{{WRAPPER_VERSION}}", "v0.7.0"), encoding="utf-8")
+
+            advisory = subprocess.run(
+                [sys.executable, str(adapter)],
+                input=json.dumps({"hook_event_name": "SessionStart", "source": "startup"}),
+                text=True,
+                capture_output=True,
+                cwd=target,
+                check=False,
+            )
+            advisory_payload = json.loads(advisory.stdout)
+
+            self.assertEqual(advisory.returncode, 0)
+            self.assertTrue(advisory_payload["continue"])
+            self.assertIn("non-breaking upgrade", advisory_payload["systemMessage"])
+
+            strict_env = {**os.environ, "EVOZEUS_WRAPPER_HOOK_ENFORCEMENT": "strict"}
+            strict = subprocess.run(
+                [sys.executable, str(adapter)],
+                input=json.dumps({"hook_event_name": "SessionStart", "source": "startup"}),
+                text=True,
+                capture_output=True,
+                cwd=target,
+                env=strict_env,
+                check=False,
+            )
+            strict_payload = json.loads(strict.stdout)
+
+            self.assertEqual(strict.returncode, 0)
+            self.assertFalse(strict_payload["continue"])
+            self.assertIn("wrapper harness", strict_payload["stopReason"])
 
 
 if __name__ == "__main__":

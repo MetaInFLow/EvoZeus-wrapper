@@ -19,7 +19,7 @@ EVOLUTION_SECTION_HEADING = "## 自进化方法"
 WRAPPER_SECTION_HEADING = "## EvoZeus-wrapper"
 LOCAL_PROJECTS_DIR = Path.home() / ".evozeus" / ".projects"
 INITIAL_VERSION = "v0.1.0"
-WRAPPER_VERSION = "v0.6.0"
+WRAPPER_VERSION = "v0.7.0"
 TARGET_EVOINFRA_DIR = ".evozeus_evoinfra"
 TARGET_WRAPPER_MANIFEST = f"{TARGET_EVOINFRA_DIR}/wrapper.json"
 TARGET_FEEDBACK_POLICY = f"{TARGET_EVOINFRA_DIR}/feedback-policy.json"
@@ -176,7 +176,7 @@ def build_evolution_section(replacements: dict[str, str]) -> str:
 5. PR 必须同步更新 `SKILL.md` 与 `CHANGELOG.md`，并通过 `python3 scripts/evozeus_wrapper_preflight.py structure` 和 PR 检查。
 6. 合并后用 `vMAJOR.MINOR.PATCH` release tag 和 release notes 固化本次进化，保留可回滚记录。
 
-边界：不要把 raw private session、客户资料、secret、未脱敏商业上下文写入公开 Issue、docs 或 release notes；`~/.evozeus/.projects/{replacements["REPO_NAME"]}/` 应指向 canonical repo，runtime install 不能作为 copied install 或第二事实源直接修改。
+边界：不要把 raw private session、客户资料、secret、未脱敏商业上下文写入公开 Issue、docs 或 release notes；`~/.evozeus/.projects/{replacements["REPO_NAME"]}/` 应指向 canonical repo，runtime-only install 只能是指针，不能作为 copied install 或第二事实源直接修改。
 
 Target repo: `{replacements["REPO_NAME"]}`
 Visibility: `{replacements["VISIBILITY"]}`
@@ -189,9 +189,9 @@ def build_status_section(replacements: dict[str, str]) -> str:
     return f"""\
 {STATUS_SECTION_HEADING}
 
-执行本 Skill 主链路前，先完成状态检查；只有检查结果为 OK，才继续进入下方原 Skill 流程。
+执行本 Skill 主链路前，优先完成状态检查。若当前只是 runtime-only install，缺少维护资产时不要把安装副本当作事实源，回 canonical repo 处理 wrapper harness 或 Skill release。
 
-本检查的运行时集成等级记录在 `{TARGET_WRAPPER_MANIFEST}` 的 `integration.mode`。只有 `native_host_hook` 表示宿主或插件 lifecycle hook 会自动触发；`prompt_runtime_check` 只是说明入口要求 agent 执行检查，不是真 hook；`hook start-check` 这类 wrapper CLI 命令只有被宿主自动调用时才算 runtime hook。
+本检查的运行时集成等级记录在 `{TARGET_WRAPPER_MANIFEST}` 的 `integration.mode`。只有 `native_host_hook` 表示 Codex project-local hook 或其他宿主/plugin lifecycle hook 会自动触发；`prompt_runtime_check` 只是说明入口要求 agent 执行检查，不是真 hook；`hook start-check` 这类 wrapper CLI 命令只有被宿主自动调用时才算 runtime hook。
 
 1. Skill release 状态
    - 当前记录版本：`{replacements["CURRENT_VERSION"]}`
@@ -207,7 +207,7 @@ def build_status_section(replacements: dict[str, str]) -> str:
    - 检查命令：`python3 scripts/evozeus_wrapper_preflight.py doctor --repo {replacements["REPO_NAME"]}`
    - 如果 `~/.evozeus/.projects`、git origin 或 runtime install 不一致：先修复为同一个 canonical repo，再继续。
 
-解决顺序：先修 source contract，再修 wrapper harness，最后处理 Skill release。全部 OK 后，再进入主链路。
+解决顺序：先修 source contract，再修 wrapper harness，最后处理 Skill release；状态已确认或已记录为 runtime-only fallback 后，再进入主链路。
 """
 
 
@@ -248,7 +248,7 @@ Wrapper migration log: `docs/wrapper-migrations/`
 
 Runtime integration modes:
 
-- `native_host_hook`：宿主或插件 lifecycle hook 已安装，并有 hook 文件和 plugin manifest 证据。
+- `native_host_hook`：Codex project-local hook 已注册，或其他宿主/plugin lifecycle hook 已安装并有证据。
 - `bootstrap_skill`：插件 Skill 基础设施可加载控制 Skill，但没有检测到宿主 lifecycle hook。
 - `prompt_runtime_check`：说明入口要求 agent 执行检查，依赖 prompt compliance。
 - `manual_only`：只能手动运行 wrapper 命令。
