@@ -43,6 +43,6 @@ Use these Skills in order:
 
 - If `~/.evozeus` is missing, stop and install / initialize EvoZeus before target transform.
 - If visibility is missing, ask `public` or `private` before creating or pushing anything.
-- If an existing repo has no GitHub release and no `CHANGELOG.md` version entry, ask the owner to choose the current Skill / kit version.
+- If an existing repo has no GitHub release and no `.evozeus-wrapper/CHANGELOG.md` version entry, ask the owner to choose the current Skill / kit version.
 - If no controlling instruction surface can be proven, run evolution surface diagnosis and ask the owner when needed.
 - Keep wrapper-owned additions append-only and do not rewrite target business logic.

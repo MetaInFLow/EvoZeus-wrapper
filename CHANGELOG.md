@@ -6,6 +6,27 @@ All notable changes to EvoZeus-wrapper are recorded here.
 
 - None yet.
 
+## [v0.8.0] - 2026-07-18
+
+### Added
+
+- Added `harness migrate-layout` with dry-run and apply modes for the one-time scattered-v1 to consolidated-v2 target migration.
+- Added conflict detection, path rewrite, migration records, empty legacy directory cleanup, and layout migration regression coverage.
+
+### Changed
+
+- Consolidated wrapper-owned target artifacts under `.evozeus-wrapper/`.
+- Kept only host-required thin entrypoints in `.codex/hooks.json` and `.github/`.
+- Changed legacy `.evozeus_evoinfra/` and `.evozeus/wrapper.json` handling from runtime fallback to migration-required input.
+- Moved GitHub Pages publishing to a workflow that builds `.evozeus-wrapper/docs/`.
+- Bumped newly generated harness manifests to `layout_version=2` and wrapper version `v0.8.0`.
+
+### Verification
+
+- `python3 -m pytest -q`
+- `python3 -m py_compile scripts/evozeus_wrapper.py scripts/evozeus_wrapper_bootstrap.py scripts/evozeus_wrapper_lifecycle.py scripts/evozeus_wrapper_preflight.py`
+- Temporary v0.7-shaped target dry-run, apply, structure, and runtime migration checks.
+
 ## [v0.7.0] - 2026-07-08
 
 ### Added

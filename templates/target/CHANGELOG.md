@@ -2,7 +2,7 @@
 
 All notable changes to {{SKILL_NAME}} are recorded here.
 
-Wrapper harness migrations are recorded under `docs/wrapper-migrations/`. Add them here only when the migration also changes this Skill's behavior or release contract.
+Wrapper harness migrations are recorded under `.evozeus-wrapper/docs/migrations/`. Add them here only when the migration also changes this Skill's behavior or release contract.
 
 ## [Unreleased]
 
@@ -30,8 +30,8 @@ Wrapper harness migrations are recorded under `docs/wrapper-migrations/`. Add th
 
 ### Verification
 
-- `python3 scripts/evozeus_wrapper_preflight.py structure`
-- `python3 scripts/evozeus_wrapper_preflight.py release --tag {{INITIAL_VERSION}} --release-notes release-notes.md`
+- `python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py structure`
+- `python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py release --tag {{INITIAL_VERSION}} --release-notes release-notes.md`
 
 ## Release Notes Policy
 

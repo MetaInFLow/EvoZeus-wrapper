@@ -36,7 +36,7 @@ Do not let copied runtime installs become another source of truth.
 
 For wrapper-managed targets, discover source state in this order:
 
-1. Read `.evozeus_evoinfra/wrapper.json`.
+1. Read `.evozeus-wrapper/wrapper.json`. If only an old manifest exists, route to layout migration first.
 2. Check `~/.evozeus/.projects/OWNER/REPO`.
 3. Verify canonical repo origin and GitHub repo access.
 4. Inspect `.codex` / `.agents` runtime installs only as pointers.
@@ -68,10 +68,10 @@ Initial wrapped release is `v0.1.0` only for a new target repo with no prior Ski
 For an existing target repo, preserve its current Skill / kit version:
 
 1. GitHub latest release tag is the current version.
-2. If GitHub has no release but `CHANGELOG.md` has a latest `vMAJOR.MINOR.PATCH` entry, create or verify that release before runtime use.
+2. If GitHub has no release but `.evozeus-wrapper/CHANGELOG.md` has a latest `vMAJOR.MINOR.PATCH` entry, create or verify that release before runtime use.
 3. If neither exists, stop and ask the owner to choose the current version.
 
-Wrapper harness version is separate and recorded in `.evozeus_evoinfra/wrapper.json`.
+Wrapper harness version is separate and recorded in `.evozeus-wrapper/wrapper.json`.
 
 ## Lifecycle
 
@@ -103,7 +103,7 @@ The diagnosis script reports facts only:
 - `skills/*/SKILL.md` inventory
 - evolution surface candidates and controller files
 - runtime integration mode: `native_host_hook`, `bootstrap_skill`, `prompt_runtime_check`, or `manual_only`
-- Codex hook registration evidence from `.codex/hooks.json` and `.codex/hooks/evozeus_wrapper_start_check.py`
+- Codex hook registration evidence from `.codex/hooks.json` and `.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py`
 - wrapper component gaps
 - source contract and runtime install state
 
@@ -206,22 +206,22 @@ Use `skills/harness-upgrade/SKILL.md`.
 ```bash
 python3 scripts/evozeus_wrapper.py harness upgrade-check \
   --target /absolute/path/to/target-skill-or-kit \
-  --latest-version v0.7.0 \
+  --latest-version v0.8.0 \
   --json
 
-python3 scripts/evozeus_wrapper.py harness upgrade \
+python3 scripts/evozeus_wrapper.py harness migrate-layout \
   --target /absolute/path/to/target-skill-or-kit \
-  --latest-version v0.7.0 \
+  --latest-version v0.8.0 \
   --dry-run \
   --json
 ```
 
-Wrapper migration updates wrapper-managed files and migration records only. It must not rewrite target Skill or runtime business logic.
+Apply the same `migrate-layout` command without `--dry-run` only after the plan has no conflicts and the user approves it. Migration moves old wrapper files into `.evozeus-wrapper/`, rewrites references, updates the layout v2 manifest, records the migration, and removes only empty legacy wrapper directories. It must not rewrite target Skill business logic.
 
 For wrapper `v0.7.0+`, the target harness must include Codex project-local hook registration:
 
 - `.codex/hooks.json` registers `SessionStart` for `startup|resume|clear|compact`.
-- `.codex/hooks/evozeus_wrapper_start_check.py` reads `.evozeus_evoinfra/wrapper.json` and emits Codex hook JSON.
+- `.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py` reads `.evozeus-wrapper/wrapper.json` and emits Codex hook JSON.
 - Non-managed hooks require Codex review/trust through `/hooks` before they run.
 
 ## GitHub Operations
@@ -240,7 +240,7 @@ gh release create v0.1.0 --repo OWNER/REPO --target main \
   --notes "Initial wrapped Skill harness."
 ```
 
-For private repos, use `--private`. Do not put sensitive content into `docs/`; GitHub Pages can become an external publishing surface depending on plan and settings.
+For private repos, use `--private`. Do not put sensitive content into `.evozeus-wrapper/docs/`; GitHub Pages can become an external publishing surface depending on plan and settings.
 
 ## Stop Conditions
 
@@ -252,7 +252,8 @@ Stop and ask when:
 - target repo name or canonical source is ambiguous.
 - GitHub write permission cannot be verified.
 - bootstrap was selected but the target GitHub repo already exists.
-- existing target repo has no GitHub release and no `CHANGELOG.md` version entry.
+- existing target repo has no GitHub release and no `.evozeus-wrapper/CHANGELOG.md` version entry.
+- an old scattered layout is detected but its migration plan has conflicts.
 - no controlling instruction surface can be proven.
 - the user wants to publish secrets, raw private sessions, customer data, or unredacted commercial context.
 - GitHub Pages would expose sensitive content.

@@ -12,33 +12,45 @@ from pathlib import Path
 
 GLOBAL_EVOZEUS_HOME = ".evozeus"
 GLOBAL_EVOZEUS_PROJECTS_DIR = ".projects"
-TARGET_EVOINFRA_DIR = ".evozeus_evoinfra"
-LEGACY_TARGET_EVOINFRA_DIR = ".evozeus"
+TARGET_EVOINFRA_DIR = ".evozeus-wrapper"
+LEGACY_TARGET_EVOINFRA_DIR = ".evozeus_evoinfra"
+OLDEST_TARGET_EVOINFRA_DIR = ".evozeus"
 TARGET_WRAPPER_MANIFEST = f"{TARGET_EVOINFRA_DIR}/wrapper.json"
 LEGACY_TARGET_WRAPPER_MANIFEST = f"{LEGACY_TARGET_EVOINFRA_DIR}/wrapper.json"
-TARGET_FEEDBACK_POLICY = f"{TARGET_EVOINFRA_DIR}/feedback-policy.json"
-TARGET_AUDIT_RULE = f"{TARGET_EVOINFRA_DIR}/audit-rule.md"
+OLDEST_TARGET_WRAPPER_MANIFEST = f"{OLDEST_TARGET_EVOINFRA_DIR}/wrapper.json"
+TARGET_CHANGELOG = f"{TARGET_EVOINFRA_DIR}/CHANGELOG.md"
+TARGET_WRAPPER_GUIDE = f"{TARGET_EVOINFRA_DIR}/WRAPPER.md"
+TARGET_FEEDBACK_POLICY = f"{TARGET_EVOINFRA_DIR}/policies/feedback-policy.json"
+TARGET_AUDIT_RULE = f"{TARGET_EVOINFRA_DIR}/policies/audit-rule.md"
 CODEX_HOOKS_CONFIG = ".codex/hooks.json"
-CODEX_START_HOOK_SCRIPT = ".codex/hooks/evozeus_wrapper_start_check.py"
+CODEX_START_HOOK_SCRIPT = f"{TARGET_EVOINFRA_DIR}/hooks/evozeus_wrapper_start_check.py"
+TARGET_DASHBOARD_INDEX = f"{TARGET_EVOINFRA_DIR}/docs/index.md"
+TARGET_DASHBOARD_CONFIG = f"{TARGET_EVOINFRA_DIR}/docs/_config.yml"
+TARGET_DESIGN_TEMPLATE = f"{TARGET_EVOINFRA_DIR}/docs/design-doc-template.md"
+TARGET_DESIGNS_DIR = f"{TARGET_EVOINFRA_DIR}/docs/designs"
+TARGET_DESIGNS_README = f"{TARGET_DESIGNS_DIR}/README.md"
+TARGET_MIGRATIONS_DIR = f"{TARGET_EVOINFRA_DIR}/docs/migrations"
+TARGET_MIGRATIONS_README = f"{TARGET_MIGRATIONS_DIR}/README.md"
+TARGET_PREFLIGHT_SCRIPT = f"{TARGET_EVOINFRA_DIR}/scripts/evozeus_wrapper_preflight.py"
 
 REQUIRED_FILES = [
-    "CHANGELOG.md",
-    "WRAPPER.md",
+    TARGET_CHANGELOG,
+    TARGET_WRAPPER_GUIDE,
     TARGET_WRAPPER_MANIFEST,
     TARGET_FEEDBACK_POLICY,
     TARGET_AUDIT_RULE,
     CODEX_HOOKS_CONFIG,
     CODEX_START_HOOK_SCRIPT,
-    "docs/index.md",
-    "docs/_config.yml",
-    "docs/design-doc-template.md",
-    "docs/designs/README.md",
-    "docs/wrapper-migrations/README.md",
+    TARGET_DASHBOARD_INDEX,
+    TARGET_DASHBOARD_CONFIG,
+    TARGET_DESIGN_TEMPLATE,
+    TARGET_DESIGNS_README,
+    TARGET_MIGRATIONS_README,
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/skill-feedback.yml",
     ".github/pull_request_template.md",
     ".github/workflows/evozeus-wrapper-preflight.yml",
-    "scripts/evozeus_wrapper_preflight.py",
+    TARGET_PREFLIGHT_SCRIPT,
 ]
 MAINTAINER_REQUIRED_FILES = REQUIRED_FILES
 
@@ -71,11 +83,11 @@ SKILL_EVOLUTION_TERMS = [
     ["~/.evozeus/.projects"],
     ["version --repo"],
     ["Skill Feedback Issue", "feedback issue"],
-    ["docs/designs", "design doc"],
-    ["docs/wrapper-migrations", "wrapper migration"],
+    [TARGET_DESIGNS_DIR, "design doc"],
+    [TARGET_MIGRATIONS_DIR, "wrapper migration"],
     ["append-only", "追加"],
     ["wrapper harness version"],
-    ["CHANGELOG.md"],
+    [TARGET_CHANGELOG],
     ["release tag", "release notes"],
 ]
 
@@ -91,7 +103,7 @@ PLACEHOLDER_PATTERNS = [
 VERSION_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 RUNTIME_REFERENCE_RE = re.compile(
-    r"(?P<path>(?:references|scripts|assets|templates|agents)/[A-Za-z0-9_.@()/+=,~ -]+)",
+    r"(?P<path>(?:references|scripts|assets|templates|agents)/[A-Za-z0-9_.@()/+=,~-]+)",
 )
 PLUGIN_MANIFEST_CANDIDATES = [
     ".codex-plugin/plugin.json",
@@ -194,6 +206,10 @@ def legacy_wrapper_manifest_path(target: Path) -> Path:
     return target / LEGACY_TARGET_EVOINFRA_DIR / "wrapper.json"
 
 
+def oldest_wrapper_manifest_path(target: Path) -> Path:
+    return target / OLDEST_TARGET_EVOINFRA_DIR / "wrapper.json"
+
+
 def read_json_object(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -206,21 +222,16 @@ def read_json_object(path: Path) -> dict:
 
 def load_wrapper_manifest(target: Path) -> dict | None:
     current_path = wrapper_manifest_path(target)
-    legacy_path = legacy_wrapper_manifest_path(target)
-    current_exists = current_path.exists()
-    legacy_exists = legacy_path.exists()
-    if not current_exists and not legacy_exists:
-        return None
-    current = read_json_object(current_path) if current_exists else None
-    legacy = read_json_object(legacy_path) if legacy_exists else None
-    if current_exists and legacy_exists and current != legacy:
+    legacy_paths = [legacy_wrapper_manifest_path(target), oldest_wrapper_manifest_path(target)]
+    existing_legacy = [path for path in legacy_paths if path.exists()]
+    if existing_legacy:
         fail(
-            "conflicting wrapper manifests: "
-            f"{TARGET_WRAPPER_MANIFEST} and {LEGACY_TARGET_WRAPPER_MANIFEST}"
+            "legacy wrapper layout requires an upgrade migration before preflight: "
+            + ", ".join(str(path.relative_to(target)) for path in existing_legacy)
         )
-    if legacy_exists and not current_exists:
-        warn(f"legacy wrapper manifest detected; migrate to {TARGET_WRAPPER_MANIFEST}: {LEGACY_TARGET_WRAPPER_MANIFEST}")
-    return current or legacy
+    if not current_path.exists():
+        return None
+    return read_json_object(current_path)
 
 
 def project_pointer_path(repo: str) -> Path:
@@ -688,14 +699,14 @@ def check_issue(args: argparse.Namespace) -> None:
 
 
 def find_design_doc(target: Path) -> Path:
-    docs_dir = target / "docs" / "designs"
+    docs_dir = target / TARGET_DESIGNS_DIR
     candidates = [
         path
         for path in docs_dir.glob("*.md")
         if path.name.lower() != "readme.md" and "template" not in path.name.lower()
     ]
     if not candidates:
-        fail("no design doc found under docs/designs/*.md")
+        fail(f"no design doc found under {TARGET_DESIGNS_DIR}/*.md")
     return sorted(candidates)[-1]
 
 
@@ -725,17 +736,17 @@ def check_pr(args: argparse.Namespace) -> None:
     design_doc = Path(args.design_doc).resolve() if args.design_doc else find_design_doc(target)
     check_design_doc(design_doc)
 
-    changelog = read_text(target / "CHANGELOG.md")
+    changelog = read_text(target / TARGET_CHANGELOG)
     if not changelog_has_unreleased_entry(changelog):
-        fail("CHANGELOG.md must contain a non-empty Unreleased entry for the PR")
-    ok("CHANGELOG.md has an Unreleased entry")
+        fail(f"{TARGET_CHANGELOG} must contain a non-empty Unreleased entry for the PR")
+    ok(f"{TARGET_CHANGELOG} has an Unreleased entry")
 
     if args.pr_body:
         body = read_text(Path(args.pr_body))
         if "design doc" not in normalize(body) and "设计" not in body:
             fail("PR body should reference the design doc")
-        if "CHANGELOG.md" not in body:
-            fail("PR body should confirm CHANGELOG.md was updated")
+        if TARGET_CHANGELOG not in body:
+            fail(f"PR body should confirm {TARGET_CHANGELOG} was updated")
         ok("PR body references design doc and changelog")
 
 
@@ -783,10 +794,10 @@ def latest_release_from_gh(repo: str) -> dict[str, str]:
 def check_release(args: argparse.Namespace) -> None:
     target = Path(args.target).resolve()
     version_key(args.tag)
-    changelog = read_text(target / "CHANGELOG.md")
+    changelog = read_text(target / TARGET_CHANGELOG)
     if not changelog_has_tag(changelog, args.tag):
-        fail(f"CHANGELOG.md must contain a release entry for {args.tag}")
-    ok(f"CHANGELOG.md contains {args.tag}")
+        fail(f"{TARGET_CHANGELOG} must contain a release entry for {args.tag}")
+    ok(f"{TARGET_CHANGELOG} contains {args.tag}")
 
     body = ""
     if args.release_notes:
@@ -801,10 +812,10 @@ def check_release(args: argparse.Namespace) -> None:
 
 def check_version(args: argparse.Namespace) -> None:
     target = Path(args.target).resolve()
-    changelog = read_text(target / "CHANGELOG.md")
+    changelog = read_text(target / TARGET_CHANGELOG)
     current_tag = args.current_tag or latest_changelog_tag(changelog)
     if not current_tag:
-        fail("could not infer current version from CHANGELOG.md; pass --current-tag vMAJOR.MINOR.PATCH")
+        fail(f"could not infer current version from {TARGET_CHANGELOG}; pass --current-tag vMAJOR.MINOR.PATCH")
     current_key = version_key(current_tag)
 
     latest = latest_release_from_gh(args.repo)
@@ -864,7 +875,10 @@ def main() -> int:
     version = sub.add_parser("version", help="Check whether GitHub has a newer Skill release.")
     version.add_argument("--target", default=".", help="Target wrapped Skill repo path.")
     version.add_argument("--repo", required=True, help="GitHub repo in OWNER/REPO format.")
-    version.add_argument("--current-tag", help="Current local Skill version. Defaults to latest release tag in CHANGELOG.md.")
+    version.add_argument(
+        "--current-tag",
+        help=f"Current local Skill version. Defaults to latest release tag in {TARGET_CHANGELOG}.",
+    )
     version.add_argument(
         "--no-release-needed",
         action="store_true",

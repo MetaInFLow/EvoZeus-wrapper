@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/evozeus_wrapper_start_check.py\"",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py\"",
             "timeout": 30,
             "statusMessage": "Checking EvoZeus wrapper harness"
           }

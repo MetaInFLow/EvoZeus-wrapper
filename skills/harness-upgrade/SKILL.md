@@ -11,7 +11,8 @@ Use this stage to keep target Skill infrastructure aligned with `MetaInFLow/EvoZ
 
 ```bash
 python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --json
-python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/skill --latest-version v0.7.0 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/skill --latest-version v0.8.0 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/skill --latest-version v0.8.0 --json
 ```
 
 ## Rules
@@ -19,14 +20,16 @@ python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/sk
 - Skill release version and wrapper harness version are separate axes.
 - Only update harness-managed files.
 - Do not touch target Skill business rules.
-- Preserve or install Codex project-local hook registration under `.codex/hooks.json` and `.codex/hooks/evozeus_wrapper_start_check.py`.
+- Preserve Codex project-local hook registration at `.codex/hooks.json`; keep its adapter under `.evozeus-wrapper/hooks/`.
 - `SKILL.md` must start, after frontmatter, with `EvoZeus-wrapper 状态检查` before the target Skill's main chain.
 - Other `SKILL.md` changes are append-only: add the `EvoZeus-wrapper` section if missing, otherwise append a migration note.
-- Record every wrapper migration under `docs/wrapper-migrations/` with from/to wrapper version, planned files, validation, and rollback.
-- Update `.evozeus_evoinfra/wrapper.json` only after the migration plan is validated.
+- Record every wrapper migration under `.evozeus-wrapper/docs/migrations/` with from/to wrapper version, file moves, validation, and rollback.
+- Update `.evozeus-wrapper/wrapper.json` to `layout_version=2` only after all destination conflicts are cleared.
+- Old `.evozeus_evoinfra/` and `.evozeus/wrapper.json` paths are migration inputs, not runtime fallbacks.
 - Major wrapper upgrades require explicit user confirmation.
 
 ## Stop Conditions
 
-- `.evozeus_evoinfra/wrapper.json` is missing and the user has not approved repair.
-- Managed files, including `.codex/hooks.json` or `.codex/hooks/evozeus_wrapper_start_check.py`, have local edits and no merge strategy exists.
+- `.evozeus-wrapper/wrapper.json` is missing and no legacy layout can be migrated or the user has not approved repair.
+- A migration destination differs from its legacy source.
+- Managed files, including `.codex/hooks.json` or `.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py`, have local edits and no merge strategy exists.

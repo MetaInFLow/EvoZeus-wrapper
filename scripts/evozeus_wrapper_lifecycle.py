@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 import hashlib
 import json
-import shutil
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -21,62 +20,94 @@ STAGE_LABELS = {
 
 GLOBAL_EVOZEUS_HOME = ".evozeus"
 GLOBAL_EVOZEUS_PROJECTS_DIR = ".projects"
-TARGET_EVOINFRA_DIR = ".evozeus_evoinfra"
-LEGACY_TARGET_EVOINFRA_DIR = ".evozeus"
+TARGET_EVOINFRA_DIR = ".evozeus-wrapper"
+LEGACY_TARGET_EVOINFRA_DIR = ".evozeus_evoinfra"
+OLDEST_TARGET_EVOINFRA_DIR = ".evozeus"
 TARGET_WRAPPER_MANIFEST = f"{TARGET_EVOINFRA_DIR}/wrapper.json"
 LEGACY_TARGET_WRAPPER_MANIFEST = f"{LEGACY_TARGET_EVOINFRA_DIR}/wrapper.json"
-TARGET_FEEDBACK_POLICY = f"{TARGET_EVOINFRA_DIR}/feedback-policy.json"
-TARGET_AUDIT_RULE = f"{TARGET_EVOINFRA_DIR}/audit-rule.md"
+OLDEST_TARGET_WRAPPER_MANIFEST = f"{OLDEST_TARGET_EVOINFRA_DIR}/wrapper.json"
+TARGET_CHANGELOG = f"{TARGET_EVOINFRA_DIR}/CHANGELOG.md"
+TARGET_WRAPPER_GUIDE = f"{TARGET_EVOINFRA_DIR}/WRAPPER.md"
+TARGET_FEEDBACK_POLICY = f"{TARGET_EVOINFRA_DIR}/policies/feedback-policy.json"
+TARGET_AUDIT_RULE = f"{TARGET_EVOINFRA_DIR}/policies/audit-rule.md"
 LEGACY_TARGET_FEEDBACK_POLICY = f"{LEGACY_TARGET_EVOINFRA_DIR}/feedback-policy.json"
 LEGACY_TARGET_AUDIT_RULE = f"{LEGACY_TARGET_EVOINFRA_DIR}/audit-rule.md"
+OLDEST_TARGET_FEEDBACK_POLICY = f"{OLDEST_TARGET_EVOINFRA_DIR}/feedback-policy.json"
+OLDEST_TARGET_AUDIT_RULE = f"{OLDEST_TARGET_EVOINFRA_DIR}/audit-rule.md"
 CODEX_HOOKS_CONFIG = ".codex/hooks.json"
-CODEX_START_HOOK_SCRIPT = ".codex/hooks/evozeus_wrapper_start_check.py"
+CODEX_START_HOOK_SCRIPT = f"{TARGET_EVOINFRA_DIR}/hooks/evozeus_wrapper_start_check.py"
 CODEX_START_HOOK_EVENT = "SessionStart"
 CODEX_START_HOOK_MATCHER = "startup|resume|clear|compact"
+TARGET_DASHBOARD_INDEX = f"{TARGET_EVOINFRA_DIR}/docs/index.md"
+TARGET_DASHBOARD_CONFIG = f"{TARGET_EVOINFRA_DIR}/docs/_config.yml"
+TARGET_DESIGN_TEMPLATE = f"{TARGET_EVOINFRA_DIR}/docs/design-doc-template.md"
+TARGET_DESIGNS_README = f"{TARGET_EVOINFRA_DIR}/docs/designs/README.md"
+TARGET_MIGRATIONS_README = f"{TARGET_EVOINFRA_DIR}/docs/migrations/README.md"
+TARGET_PREFLIGHT_SCRIPT = f"{TARGET_EVOINFRA_DIR}/scripts/evozeus_wrapper_preflight.py"
 
 REQUIRED_WRAPPER_FILES = [
-    "CHANGELOG.md",
-    "WRAPPER.md",
+    TARGET_CHANGELOG,
+    TARGET_WRAPPER_GUIDE,
+    TARGET_WRAPPER_MANIFEST,
     TARGET_FEEDBACK_POLICY,
     TARGET_AUDIT_RULE,
     CODEX_HOOKS_CONFIG,
     CODEX_START_HOOK_SCRIPT,
-    "docs/index.md",
-    "docs/_config.yml",
-    "docs/design-doc-template.md",
-    "docs/designs/README.md",
-    "docs/wrapper-migrations/README.md",
+    TARGET_DASHBOARD_INDEX,
+    TARGET_DASHBOARD_CONFIG,
+    TARGET_DESIGN_TEMPLATE,
+    TARGET_DESIGNS_README,
+    TARGET_MIGRATIONS_README,
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/skill-feedback.yml",
     ".github/pull_request_template.md",
     ".github/workflows/evozeus-wrapper-preflight.yml",
-    "scripts/evozeus_wrapper_preflight.py",
+    TARGET_PREFLIGHT_SCRIPT,
 ]
 
 WRAPPER_MANAGED_FILES = [
-    "WRAPPER.md",
+    TARGET_CHANGELOG,
+    TARGET_WRAPPER_GUIDE,
     TARGET_FEEDBACK_POLICY,
     TARGET_AUDIT_RULE,
     CODEX_HOOKS_CONFIG,
     CODEX_START_HOOK_SCRIPT,
-    "docs/index.md",
-    "docs/_config.yml",
-    "docs/design-doc-template.md",
-    "docs/designs/README.md",
-    "docs/wrapper-migrations/README.md",
+    TARGET_DASHBOARD_INDEX,
+    TARGET_DASHBOARD_CONFIG,
+    TARGET_DESIGN_TEMPLATE,
+    TARGET_DESIGNS_README,
+    TARGET_MIGRATIONS_README,
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/skill-feedback.yml",
     ".github/pull_request_template.md",
     ".github/workflows/evozeus-wrapper-preflight.yml",
-    "scripts/evozeus_wrapper_preflight.py",
+    TARGET_PREFLIGHT_SCRIPT,
 ]
+
+LEGACY_LAYOUT_FILE_MAP = (
+    ("CHANGELOG.md", TARGET_CHANGELOG),
+    ("WRAPPER.md", TARGET_WRAPPER_GUIDE),
+    ("docs/index.md", TARGET_DASHBOARD_INDEX),
+    ("docs/_config.yml", TARGET_DASHBOARD_CONFIG),
+    ("docs/design-doc-template.md", TARGET_DESIGN_TEMPLATE),
+    ("scripts/evozeus_wrapper_preflight.py", TARGET_PREFLIGHT_SCRIPT),
+    (".codex/hooks/evozeus_wrapper_start_check.py", CODEX_START_HOOK_SCRIPT),
+    (LEGACY_TARGET_FEEDBACK_POLICY, TARGET_FEEDBACK_POLICY),
+    (LEGACY_TARGET_AUDIT_RULE, TARGET_AUDIT_RULE),
+    (OLDEST_TARGET_FEEDBACK_POLICY, TARGET_FEEDBACK_POLICY),
+    (OLDEST_TARGET_AUDIT_RULE, TARGET_AUDIT_RULE),
+)
+LEGACY_LAYOUT_TREE_MAP = (
+    ("docs/designs", f"{TARGET_EVOINFRA_DIR}/docs/designs"),
+    ("docs/wrapper-migrations", f"{TARGET_EVOINFRA_DIR}/docs/migrations"),
+)
 
 WRAPPER_REPO = "MetaInFLow/EvoZeus-wrapper"
 INITIAL_SKILL_VERSION = "v0.1.0"
 VERSION_HEADER_RE = re.compile(r"^##\s+\[?(v\d+\.\d+\.\d+)\]?\b", re.MULTILINE)
 SKILL_STATUS_SECTION = "SKILL.md EvoZeus-wrapper status check section (front matter prelude)"
 SKILL_WRAPPER_SECTION = "SKILL.md EvoZeus-wrapper section or migration note (append only)"
-WRAPPER_MIGRATION_README = "docs/wrapper-migrations/README.md"
+WRAPPER_MIGRATION_README = TARGET_MIGRATIONS_README
 CONTROL_SKILL_NAME_TOKENS = (
     "bootstrap",
     "control",
@@ -225,7 +256,9 @@ def latest_changelog_tag_from_text(changelog: str) -> str | None:
 
 
 def latest_changelog_tag(target: Path) -> str | None:
-    changelog = target / "CHANGELOG.md"
+    changelog = target / TARGET_CHANGELOG
+    if not changelog.exists():
+        changelog = target / "CHANGELOG.md"
     if not changelog.exists():
         return None
     return latest_changelog_tag_from_text(changelog.read_text(encoding="utf-8"))
@@ -448,13 +481,18 @@ def diagnose_harness_state(target: Path) -> dict[str, Any]:
     required_files = REQUIRED_WRAPPER_FILES + [TARGET_WRAPPER_MANIFEST]
     present = [rel for rel in required_files if (target / rel).exists()]
     missing = [rel for rel in required_files if not (target / rel).exists()]
+    legacy_present = sorted(
+        str(path.relative_to(target))
+        for paths in _legacy_layout_sources(target).values()
+        for path in paths
+    )
     if manifest_status["legacy_manifest_detected"] and not manifest_status["current_manifest_detected"]:
-        present.append(LEGACY_TARGET_WRAPPER_MANIFEST)
-    manifest = load_wrapper_manifest(target)
-    if not present:
+        present.extend(manifest_status["legacy_manifest_paths"])
+    manifest = load_wrapper_manifest(target, allow_legacy=True)
+    if manifest_status["migration_required"] or legacy_present:
+        state = "migration_required"
+    elif not present:
         state = "missing"
-    elif manifest_status["migration_required"]:
-        state = "legacy_compatible"
     elif not missing:
         state = "complete"
     else:
@@ -462,6 +500,7 @@ def diagnose_harness_state(target: Path) -> dict[str, Any]:
     return {
         "state": state,
         "present_files": present,
+        "legacy_files": legacy_present,
         "missing_files": missing,
         "wrapper_version": manifest.get("wrapper_version") if manifest else None,
         **manifest_status,
@@ -822,7 +861,7 @@ def assess_component_gaps(target: Path, evolution_surface: dict[str, Any]) -> di
         missing_concepts.append("evolution surface diagnosis result")
     elif not selected.get("has_wrapper_status_check"):
         missing_concepts.append(f"{selected['path']} EvoZeus-wrapper status check")
-    if not (target / "CHANGELOG.md").exists():
+    if not (target / TARGET_CHANGELOG).exists():
         missing_concepts.append("Skill or kit release changelog")
     if not wrapper_manifest_path(target).exists():
         missing_concepts.append("wrapper manifest")
@@ -950,7 +989,7 @@ def diagnose_skill(
         if path.exists() or path.is_symlink()
     ]
 
-    manifest = load_wrapper_manifest(target)
+    manifest = load_wrapper_manifest(target, allow_legacy=True)
     manifest_repo = manifest.get("canonical_repo") if manifest else None
     effective_repo = repo or manifest_repo
     repo_state = diagnose_repo_state(target, effective_repo, home, workspace_roots or [], runner)
@@ -1003,6 +1042,10 @@ def legacy_wrapper_manifest_path(target: Path) -> Path:
     return target / LEGACY_TARGET_EVOINFRA_DIR / "wrapper.json"
 
 
+def oldest_wrapper_manifest_path(target: Path) -> Path:
+    return target / OLDEST_TARGET_EVOINFRA_DIR / "wrapper.json"
+
+
 def _read_manifest_json(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -1014,53 +1057,50 @@ def _read_manifest_json(path: Path) -> dict[str, Any]:
 
 
 def wrapper_manifest_status(target: Path) -> dict[str, Any]:
-    current_path = wrapper_manifest_path(target)
-    legacy_path = legacy_wrapper_manifest_path(target)
-    current_exists = current_path.exists()
-    legacy_exists = legacy_path.exists()
-    conflict = False
-    active_path: Path | None = None
-    source = "missing"
-    current_manifest: dict[str, Any] | None = None
-    legacy_manifest: dict[str, Any] | None = None
-
-    if current_exists:
-        current_manifest = _read_manifest_json(current_path)
-        active_path = current_path
-        source = "current"
-    if legacy_exists:
-        legacy_manifest = _read_manifest_json(legacy_path)
-        if not current_exists:
-            active_path = legacy_path
-            source = "legacy"
-        elif current_manifest != legacy_manifest:
-            conflict = True
-            source = "conflict"
-        else:
-            source = "current_with_duplicate_legacy"
+    candidates = [
+        ("current", wrapper_manifest_path(target)),
+        ("legacy_evoinfra", legacy_wrapper_manifest_path(target)),
+        ("legacy_evozeus", oldest_wrapper_manifest_path(target)),
+    ]
+    detected = [(source, path, _read_manifest_json(path)) for source, path in candidates if path.exists()]
+    active_source, active_path, active_manifest = detected[0] if detected else ("missing", None, None)
+    conflict = any(manifest != active_manifest for _, _, manifest in detected[1:])
+    source = "conflict" if conflict else active_source
+    current_exists = wrapper_manifest_path(target).exists()
+    legacy_paths = [path for name, path, _ in detected if name != "current"]
+    legacy_exists = bool(legacy_paths)
 
     return {
         "target_infra_dir": TARGET_EVOINFRA_DIR,
         "legacy_infra_dir": LEGACY_TARGET_EVOINFRA_DIR,
+        "oldest_infra_dir": OLDEST_TARGET_EVOINFRA_DIR,
         "manifest_path": TARGET_WRAPPER_MANIFEST,
         "legacy_manifest_path": LEGACY_TARGET_WRAPPER_MANIFEST,
+        "oldest_manifest_path": OLDEST_TARGET_WRAPPER_MANIFEST,
         "active_manifest_path": str(active_path) if active_path else None,
         "active_manifest_relpath": str(active_path.relative_to(target)) if active_path else None,
         "manifest_source": source,
         "current_manifest_detected": current_exists,
         "legacy_manifest_detected": legacy_exists,
-        "migration_required": legacy_exists and not current_exists,
+        "legacy_manifest_paths": [str(path.relative_to(target)) for path in legacy_paths],
+        "migration_required": legacy_exists or not current_exists and bool(detected),
         "duplicate_legacy_detected": legacy_exists and current_exists and not conflict,
         "conflict": conflict,
     }
 
 
-def load_wrapper_manifest(target: Path) -> dict[str, Any] | None:
+def load_wrapper_manifest(target: Path, allow_legacy: bool = False) -> dict[str, Any] | None:
     status = wrapper_manifest_status(target)
     if status["conflict"]:
         raise ValueError(
-            "conflicting wrapper manifests: "
-            f"{TARGET_WRAPPER_MANIFEST} and {LEGACY_TARGET_WRAPPER_MANIFEST}"
+            "conflicting wrapper manifests: " + ", ".join(
+                [TARGET_WRAPPER_MANIFEST, LEGACY_TARGET_WRAPPER_MANIFEST, OLDEST_TARGET_WRAPPER_MANIFEST]
+            )
+        )
+    if status["migration_required"] and not allow_legacy:
+        raise ValueError(
+            "legacy wrapper layout requires migration before managed use: "
+            + ", ".join(status["legacy_manifest_paths"])
         )
     active = status["active_manifest_path"]
     if not active:
@@ -1076,10 +1116,10 @@ def diagnose_source_contract(
     installs: list[dict[str, Any]],
     runner=run_command,
 ) -> dict[str, Any]:
-    manifest = load_wrapper_manifest(target)
+    manifest = load_wrapper_manifest(target, allow_legacy=True)
     discovery_order = [
         TARGET_WRAPPER_MANIFEST,
-        f"{LEGACY_TARGET_WRAPPER_MANIFEST} (legacy fallback only)",
+        f"{LEGACY_TARGET_WRAPPER_MANIFEST} / {OLDEST_TARGET_WRAPPER_MANIFEST} (migration detection only)",
         "~/.evozeus/.projects/OWNER/REPO",
         "canonical repo git origin / GitHub repo",
         "~/.codex/skills/<skill-name> and ~/.agents/skills/<skill-name>",
@@ -1100,6 +1140,11 @@ def diagnose_source_contract(
 
     errors: list[str] = []
     warnings: list[str] = []
+    manifest_state = wrapper_manifest_status(target)
+    if manifest_state["migration_required"]:
+        errors.append(
+            "legacy wrapper layout detected; run EvoZeus-wrapper harness upgrade before managed execution"
+        )
     manifest_repo = manifest.get("canonical_repo")
     if not manifest_repo:
         errors.append(f"{TARGET_WRAPPER_MANIFEST} is missing canonical_repo")
@@ -1189,8 +1234,10 @@ def build_wrapper_manifest(
         "wrapper_repo": WRAPPER_REPO,
         "wrapper_version": wrapper_version,
         "applied_at": date.today().isoformat(),
+        "layout_version": 2,
+        "target_wrapper_dir": TARGET_EVOINFRA_DIR,
         "target_infra_dir": TARGET_EVOINFRA_DIR,
-        "legacy_infra_dir": LEGACY_TARGET_EVOINFRA_DIR,
+        "legacy_layout_dirs": [LEGACY_TARGET_EVOINFRA_DIR, OLDEST_TARGET_EVOINFRA_DIR],
         "canonical_repo": repo,
         "managed_files": managed_files,
         "install_links": install_links,
@@ -1230,16 +1277,36 @@ def write_wrapper_manifest(target: Path, manifest: dict[str, Any], force: bool =
 
 TARGET_INFRA_PATH_REPLACEMENTS = (
     (LEGACY_TARGET_WRAPPER_MANIFEST, TARGET_WRAPPER_MANIFEST),
+    (OLDEST_TARGET_WRAPPER_MANIFEST, TARGET_WRAPPER_MANIFEST),
     (LEGACY_TARGET_FEEDBACK_POLICY, TARGET_FEEDBACK_POLICY),
+    (OLDEST_TARGET_FEEDBACK_POLICY, TARGET_FEEDBACK_POLICY),
     (LEGACY_TARGET_AUDIT_RULE, TARGET_AUDIT_RULE),
+    (OLDEST_TARGET_AUDIT_RULE, TARGET_AUDIT_RULE),
+    (".codex/hooks/evozeus_wrapper_start_check.py", CODEX_START_HOOK_SCRIPT),
+    ("scripts/evozeus_wrapper_preflight.py", TARGET_PREFLIGHT_SCRIPT),
+    ("docs/wrapper-migrations", f"{TARGET_EVOINFRA_DIR}/docs/migrations"),
+    ("docs/design-doc-template.md", TARGET_DESIGN_TEMPLATE),
+    ("docs/designs", f"{TARGET_EVOINFRA_DIR}/docs/designs"),
+    ("docs/index.md", TARGET_DASHBOARD_INDEX),
+    ("docs/_config.yml", TARGET_DASHBOARD_CONFIG),
+    ("WRAPPER.md", TARGET_WRAPPER_GUIDE),
+    ("CHANGELOG.md", TARGET_CHANGELOG),
     ("`.evozeus/.projects", "`~/.evozeus/.projects"),
 )
 
 
 def rewrite_target_infra_string(value: str) -> str:
     updated = value
+    protected: dict[str, str] = {}
+    for index, replacement in enumerate(dict(TARGET_INFRA_PATH_REPLACEMENTS).values()):
+        token = f"__EVOZEUS_WRAPPER_PATH_{index}__"
+        if replacement in updated:
+            updated = updated.replace(replacement, token)
+            protected[token] = replacement
     for old, new in TARGET_INFRA_PATH_REPLACEMENTS:
         updated = updated.replace(old, new)
+    for token, replacement in protected.items():
+        updated = updated.replace(token, replacement)
     return updated
 
 
@@ -1281,6 +1348,16 @@ def target_infra_text_files(target: Path) -> list[Path]:
         root = target / dirname
         if root.is_dir():
             files.extend(path for path in sorted(root.rglob(pattern)) if path.is_file())
+    wrapper_root = target / TARGET_EVOINFRA_DIR
+    if wrapper_root.is_dir():
+        files.extend(
+            path
+            for path in sorted(wrapper_root.rglob("*"))
+            if path.is_file() and path.suffix.lower() in {".json", ".md", ".py", ".yml", ".yaml"}
+        )
+    codex_hooks = target / CODEX_HOOKS_CONFIG
+    if codex_hooks.is_file():
+        files.append(codex_hooks)
     return list(dict.fromkeys(files))
 
 
@@ -1297,7 +1374,10 @@ def feedback_policy_path(target: Path) -> Path:
     current = target / TARGET_FEEDBACK_POLICY
     if current.exists():
         return current
-    return target / LEGACY_TARGET_FEEDBACK_POLICY
+    legacy = target / LEGACY_TARGET_FEEDBACK_POLICY
+    if legacy.exists():
+        return legacy
+    return target / OLDEST_TARGET_FEEDBACK_POLICY
 
 
 def load_feedback_policy(target: Path) -> dict[str, Any]:
@@ -1445,77 +1525,334 @@ def plan_feedback_audit(target: Path, user_input: str, context: str | None = Non
     }
 
 
-def migrate_target_infra_dir(
+def _same_file_contents(left: Path, right: Path) -> bool:
+    return left.is_file() and right.is_file() and file_sha256(left) == file_sha256(right)
+
+
+def _legacy_layout_sources(target: Path) -> dict[str, list[Path]]:
+    grouped: dict[str, list[Path]] = {}
+    manifest_status = wrapper_manifest_status(target)
+    if manifest_status["current_manifest_detected"] and not manifest_status["legacy_manifest_detected"]:
+        current_manifest = _read_manifest_json(wrapper_manifest_path(target))
+        if current_manifest.get("layout_version") == 2:
+            return grouped
+
+    def add(source: Path, destination: str) -> None:
+        if source.is_file():
+            grouped.setdefault(destination, []).append(source)
+
+    for source_rel, destination in LEGACY_LAYOUT_FILE_MAP:
+        add(target / source_rel, destination)
+
+    for rel in manifest_status["legacy_manifest_paths"]:
+        add(target / rel, TARGET_WRAPPER_MANIFEST)
+
+    for source_dir_rel, destination_dir in LEGACY_LAYOUT_TREE_MAP:
+        source_dir = target / source_dir_rel
+        if not source_dir.is_dir():
+            continue
+        for source in sorted(source_dir.rglob("*")):
+            if source.is_file():
+                rel = source.relative_to(source_dir)
+                add(source, str(Path(destination_dir) / rel))
+    return grouped
+
+
+def plan_target_layout_migration(
     target: Path,
     latest_version: str | None = None,
-    remove_duplicate_legacy: bool = False,
+    today: date | None = None,
 ) -> dict[str, Any]:
     target = target.expanduser().resolve()
-    before = wrapper_manifest_status(target)
-    if before["conflict"]:
-        raise ValueError(
-            "cannot migrate because current and legacy wrapper manifests conflict: "
-            f"{TARGET_WRAPPER_MANIFEST} vs {LEGACY_TARGET_WRAPPER_MANIFEST}"
+    manifest_status = wrapper_manifest_status(target)
+    conflicts: list[str] = []
+    if manifest_status["conflict"]:
+        conflicts.append("legacy wrapper manifests contain different data")
+    git_status = run_command(
+        ["git", "-C", str(target), "status", "--porcelain", "--untracked-files=normal"]
+    )
+    worktree_clean = git_status["returncode"] != 0 or not git_status.get("stdout", "").strip()
+    if not worktree_clean:
+        conflicts.append("target git worktree is not clean; commit or stash changes before migration")
+
+    moves: list[dict[str, str]] = []
+    for destination_rel, sources in sorted(_legacy_layout_sources(target).items()):
+        destination = target / destination_rel
+        primary = sources[0]
+        if destination.is_file():
+            for source in sources:
+                if _same_file_contents(source, destination):
+                    moves.append(
+                        {
+                            "action": "remove_duplicate",
+                            "source": str(source.relative_to(target)),
+                            "destination": destination_rel,
+                        }
+                    )
+                else:
+                    conflicts.append(
+                        f"destination differs from legacy source: {destination_rel} <- {source.relative_to(target)}"
+                    )
+            continue
+        if destination.exists():
+            conflicts.append(f"destination is not a regular file: {destination_rel}")
+            continue
+
+        moves.append(
+            {
+                "action": "move",
+                "source": str(primary.relative_to(target)),
+                "destination": destination_rel,
+            }
         )
+        for duplicate in sources[1:]:
+            if _same_file_contents(duplicate, primary):
+                moves.append(
+                    {
+                        "action": "remove_duplicate",
+                        "source": str(duplicate.relative_to(target)),
+                        "destination": destination_rel,
+                    }
+                )
+            else:
+                conflicts.append(
+                    f"multiple legacy sources differ for {destination_rel}: "
+                    f"{primary.relative_to(target)} vs {duplicate.relative_to(target)}"
+                )
 
-    current_dir = target / TARGET_EVOINFRA_DIR
-    legacy_dir = target / LEGACY_TARGET_EVOINFRA_DIR
+    current_manifest = (
+        None if manifest_status["conflict"] else load_wrapper_manifest(target, allow_legacy=True)
+    )
+    current_version = current_manifest.get("wrapper_version") if current_manifest else None
+    migration_record = (
+        f"{TARGET_EVOINFRA_DIR}/docs/migrations/"
+        f"{(today or date.today()).isoformat()}-layout-v1-to-v2.md"
+    )
+    requires_migration = bool(moves) or manifest_status["migration_required"]
+    if requires_migration and not manifest_status["active_manifest_path"]:
+        conflicts.append("legacy wrapper manifest is missing; repair or adopt the harness before migration")
+    if requires_migration and (target / migration_record).exists():
+        conflicts.append(f"migration record already exists: {migration_record}")
+
+    return {
+        "stage": "harness_layout_migration",
+        "target": str(target),
+        "writes": False,
+        "from_layout": "scattered-v1",
+        "to_layout": "consolidated-v2",
+        "target_wrapper_dir": TARGET_EVOINFRA_DIR,
+        "manifest_path": TARGET_WRAPPER_MANIFEST,
+        "from_manifest_source": manifest_status["manifest_source"],
+        "current_version": current_version,
+        "latest_version": latest_version or current_version,
+        "migration_required": requires_migration,
+        "migration_record": migration_record if requires_migration else None,
+        "moves": moves,
+        "managed_file_refreshes": [
+            TARGET_PREFLIGHT_SCRIPT,
+            CODEX_START_HOOK_SCRIPT,
+            ".github/workflows/evozeus-wrapper-preflight.yml",
+        ],
+        "preserved_host_entrypoints": [
+            CODEX_HOOKS_CONFIG,
+            ".github/ISSUE_TEMPLATE/",
+            ".github/pull_request_template.md",
+            ".github/workflows/evozeus-wrapper-preflight.yml",
+        ],
+        "conflicts": conflicts,
+        "worktree_clean": worktree_clean,
+        "can_apply": requires_migration and not conflicts,
+        "rollback": "revert the migration commit; migration must run in a clean target worktree",
+    }
+
+
+def _remove_empty_legacy_dirs(target: Path) -> list[str]:
+    candidates = [
+        ".codex/hooks/__pycache__",
+        ".codex/hooks",
+        "scripts/__pycache__",
+        "docs/designs",
+        "docs/wrapper-migrations",
+        "docs",
+        "scripts",
+        LEGACY_TARGET_EVOINFRA_DIR,
+        OLDEST_TARGET_EVOINFRA_DIR,
+    ]
+    removed: list[str] = []
+    for rel in candidates:
+        path = target / rel
+        if not path.is_dir():
+            continue
+        try:
+            path.rmdir()
+        except OSError:
+            continue
+        removed.append(rel)
+    return removed
+
+
+def _remove_legacy_wrapper_caches(target: Path) -> list[str]:
+    patterns = [
+        ".codex/hooks/__pycache__/evozeus_wrapper_start_check.*.pyc",
+        "scripts/__pycache__/evozeus_wrapper_preflight.*.pyc",
+    ]
+    removed: list[str] = []
+    for pattern in patterns:
+        for path in target.glob(pattern):
+            if path.is_file():
+                path.unlink()
+                removed.append(str(path.relative_to(target)))
+    return removed
+
+
+def _refresh_migrated_managed_files(target: Path, wrapper_version: str | None) -> list[str]:
+    wrapper_root = Path(__file__).resolve().parents[1]
+    refresh_map = [
+        (
+            wrapper_root / "scripts" / "evozeus_wrapper_preflight.py",
+            target / TARGET_PREFLIGHT_SCRIPT,
+        ),
+        (
+            wrapper_root / "templates" / "target" / ".codex" / "hooks" / "evozeus_wrapper_start_check.py",
+            target / CODEX_START_HOOK_SCRIPT,
+        ),
+        (
+            wrapper_root / "templates" / "target" / ".github" / "workflows" / "evozeus-wrapper-preflight.yml",
+            target / ".github" / "workflows" / "evozeus-wrapper-preflight.yml",
+        ),
+    ]
+    refreshed: list[str] = []
+    for source, destination in refresh_map:
+        if not source.is_file():
+            raise ValueError(f"wrapper migration source is missing: {source}")
+        text = source.read_text(encoding="utf-8")
+        if source.name == "evozeus_wrapper_start_check.py":
+            text = text.replace("{{WRAPPER_VERSION}}", wrapper_version or "")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(text, encoding="utf-8")
+        if destination.suffix == ".py":
+            destination.chmod(0o755)
+        refreshed.append(str(destination.relative_to(target)))
+    return refreshed
+
+
+def migrate_target_layout(
+    target: Path,
+    latest_version: str | None = None,
+    today: date | None = None,
+) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    plan = plan_target_layout_migration(target, latest_version, today)
+    if plan["conflicts"]:
+        raise ValueError("cannot migrate wrapper layout:\n- " + "\n- ".join(plan["conflicts"]))
+    if not plan["migration_required"]:
+        return {**plan, "writes": False, "actions": [], "changed_files": []}
+
     actions: list[str] = []
-
-    if legacy_dir.exists() and not current_dir.exists():
-        legacy_dir.rename(current_dir)
-        actions.append(f"move {LEGACY_TARGET_EVOINFRA_DIR}/ -> {TARGET_EVOINFRA_DIR}/")
-    elif legacy_dir.exists() and current_dir.exists() and remove_duplicate_legacy:
-        shutil.rmtree(legacy_dir)
-        actions.append(f"remove duplicate legacy {LEGACY_TARGET_EVOINFRA_DIR}/")
-
     changed_files: list[str] = []
-    if current_dir.is_dir():
-        for path in sorted(current_dir.rglob("*.json")):
-            if rewrite_target_infra_json_file(path):
-                changed_files.append(str(path.relative_to(target)))
-
-    manifest_path = wrapper_manifest_path(target)
-    if manifest_path.exists():
-        manifest = _read_manifest_json(manifest_path)
-        updated_manifest = rewrite_target_infra_json(manifest)
-        updated_manifest["target_infra_dir"] = TARGET_EVOINFRA_DIR
-        updated_manifest["legacy_infra_dir"] = LEGACY_TARGET_EVOINFRA_DIR
-        if latest_version:
-            updated_manifest["wrapper_version"] = latest_version
-            updated_manifest["applied_at"] = date.today().isoformat()
-        if updated_manifest != manifest:
-            manifest_path.write_text(
-                json.dumps(updated_manifest, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            rel = str(manifest_path.relative_to(target))
-            if rel not in changed_files:
-                changed_files.append(rel)
+    for move in plan["moves"]:
+        source = target / move["source"]
+        destination = target / move["destination"]
+        if move["action"] == "move":
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(destination)
+            actions.append(f"move {move['source']} -> {move['destination']}")
+            changed_files.append(move["destination"])
+        else:
+            source.unlink()
+            actions.append(f"remove duplicate {move['source']}")
 
     for path in target_infra_text_files(target):
         if rewrite_target_infra_text_file(path):
             changed_files.append(str(path.relative_to(target)))
 
+    refreshed_files = _refresh_migrated_managed_files(target, latest_version or plan["current_version"])
+    changed_files.extend(refreshed_files)
+    actions.extend(f"refresh managed file {path}" for path in refreshed_files)
+
+    manifest_path = wrapper_manifest_path(target)
+    if not manifest_path.is_file():
+        raise ValueError(f"migration did not produce {TARGET_WRAPPER_MANIFEST}")
+    manifest = _read_manifest_json(manifest_path)
+    manifest = rewrite_target_infra_json(manifest)
+    manifest["wrapper_version"] = latest_version or manifest.get("wrapper_version")
+    manifest["applied_at"] = (today or date.today()).isoformat()
+    manifest["layout_version"] = 2
+    manifest["target_wrapper_dir"] = TARGET_EVOINFRA_DIR
+    manifest["target_infra_dir"] = TARGET_EVOINFRA_DIR
+    manifest["migrated_from_layout"] = "scattered-v1"
+    manifest["legacy_layout_dirs"] = [LEGACY_TARGET_EVOINFRA_DIR, OLDEST_TARGET_EVOINFRA_DIR]
+    manifest["managed_files"] = WRAPPER_MANAGED_FILES
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    changed_files.append(TARGET_WRAPPER_MANIFEST)
+
+    migration_record = target / plan["migration_record"]
+    migration_record.parent.mkdir(parents=True, exist_ok=True)
+    migration_record.write_text(
+        "\n".join(
+            [
+                "# EvoZeus-wrapper 布局迁移：v1 -> v2",
+                "",
+                f"- 日期：{(today or date.today()).isoformat()}",
+                f"- Wrapper 版本：{plan['current_version'] or 'unknown'} -> {plan['latest_version'] or 'unknown'}",
+                f"- 新事实源：`{TARGET_WRAPPER_MANIFEST}`",
+                "- 目标：把 wrapper 产物归拢到 `.evozeus-wrapper/`。",
+                "",
+                "## 移动记录",
+                "",
+                *[f"- `{item['source']}` -> `{item['destination']}`" for item in plan["moves"]],
+                "",
+                "## 保留的宿主接点",
+                "",
+                *[f"- `{item}`" for item in plan["preserved_host_entrypoints"]],
+                "",
+                "## 验证",
+                "",
+                f"- `python3 {TARGET_PREFLIGHT_SCRIPT} structure`",
+                f"- `python3 {TARGET_PREFLIGHT_SCRIPT} runtime`",
+                "",
+                "## 回滚",
+                "",
+                "- 回滚包含本次迁移的 Git commit。",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    changed_files.append(plan["migration_record"])
+
+    removed_caches = _remove_legacy_wrapper_caches(target)
+    actions.extend(f"remove generated cache {path}" for path in removed_caches)
+    removed_dirs = _remove_empty_legacy_dirs(target)
+    actions.extend(f"remove empty directory {path}/" for path in removed_dirs)
     after = wrapper_manifest_status(target)
+    if after["migration_required"] or after["legacy_manifest_detected"]:
+        raise ValueError("migration left a legacy wrapper manifest behind")
+
     return {
-        "stage": "harness_upgrade",
-        "target": str(target),
+        **plan,
         "writes": True,
-        "target_infra_dir": TARGET_EVOINFRA_DIR,
-        "legacy_infra_dir": LEGACY_TARGET_EVOINFRA_DIR,
-        "manifest_path": TARGET_WRAPPER_MANIFEST,
-        "legacy_manifest_detected": after["legacy_manifest_detected"],
-        "migration_required": after["migration_required"],
-        "manifest_source": after["manifest_source"],
-        "from_manifest_source": before["manifest_source"],
-        "latest_version": latest_version,
+        "migration_required": False,
+        "can_apply": False,
         "actions": actions,
         "changed_files": list(dict.fromkeys(changed_files)),
+        "removed_empty_dirs": removed_dirs,
+        "removed_generated_caches": removed_caches,
+        "manifest_source": after["manifest_source"],
     }
 
 
+def migrate_target_infra_dir(
+    target: Path,
+    latest_version: str | None = None,
+    remove_duplicate_legacy: bool = False,
+) -> dict[str, Any]:
+    return migrate_target_layout(target=target, latest_version=latest_version)
+
+
 def plan_transform_action(harness_state: str, repo_exists: bool | None) -> str:
+    if harness_state == "migration_required":
+        return "migrate_layout"
     if harness_state == "complete":
         return "verify"
     if harness_state == "partial":
@@ -1624,7 +1961,7 @@ def wrapper_migration_doc_path(current: str | None, latest: str | None, today: d
         return None
     day = today or date.today()
     current_label = current or "unknown"
-    return f"docs/wrapper-migrations/{day.isoformat()}-{current_label}-to-{latest}.md"
+    return f"{TARGET_EVOINFRA_DIR}/docs/migrations/{day.isoformat()}-{current_label}-to-{latest}.md"
 
 
 def plan_harness_upgrade(
@@ -1635,7 +1972,7 @@ def plan_harness_upgrade(
     instruction_surface: str | None = None,
 ) -> dict[str, Any]:
     target = target.expanduser().resolve()
-    manifest = load_wrapper_manifest(target)
+    manifest = load_wrapper_manifest(target, allow_legacy=True)
     manifest_status = wrapper_manifest_status(target)
     architecture = detect_target_architecture(target)
     manifest_surface = manifest.get("instruction_surface") if manifest else None
@@ -1696,11 +2033,12 @@ def plan_harness_upgrade(
 
     canonical_repo = manifest.get("canonical_repo") if manifest else None
     integration = architecture["integration"]
+    layout_migration = plan_target_layout_migration(target, latest, today)
     validation = [
-        "python3 scripts/evozeus_wrapper_preflight.py structure",
+        f"python3 {TARGET_PREFLIGHT_SCRIPT} structure",
     ]
     if canonical_repo:
-        validation.append(f"python3 scripts/evozeus_wrapper_preflight.py doctor --repo {canonical_repo}")
+        validation.append(f"python3 {TARGET_PREFLIGHT_SCRIPT} doctor --repo {canonical_repo}")
     if latest:
         validation.append(
             "python3 scripts/evozeus_wrapper.py harness upgrade-check "
@@ -1713,6 +2051,7 @@ def plan_harness_upgrade(
         "writes": False,
         "target_infra_dir": TARGET_EVOINFRA_DIR,
         "legacy_infra_dir": LEGACY_TARGET_EVOINFRA_DIR,
+        "oldest_infra_dir": OLDEST_TARGET_EVOINFRA_DIR,
         "manifest_path": TARGET_WRAPPER_MANIFEST,
         "legacy_manifest_detected": manifest_status["legacy_manifest_detected"],
         "migration_required": manifest_status["migration_required"],
@@ -1742,18 +2081,19 @@ def plan_harness_upgrade(
             "from_wrapper_version": current,
             "to_wrapper_version": latest,
             "doc_path": migration_doc,
-            "log_dir": "docs/wrapper-migrations",
+            "log_dir": f"{TARGET_EVOINFRA_DIR}/docs/migrations",
             "records_wrapper_version_in": TARGET_WRAPPER_MANIFEST,
         },
+        "layout_migration": layout_migration,
         "planned_files": deduped_planned_files,
         "migration_steps": [
             f"Read {TARGET_WRAPPER_MANIFEST} and confirm canonical_repo before touching runtime installs.",
-            f"If only {LEGACY_TARGET_WRAPPER_MANIFEST} exists, migrate it to {TARGET_WRAPPER_MANIFEST}.",
+            f"If {LEGACY_TARGET_WRAPPER_MANIFEST} or {OLDEST_TARGET_WRAPPER_MANIFEST} exists, run the one-time layout migration.",
             "Diff wrapper-managed files; if they contain local edits, stop for merge review.",
             "Copy or merge wrapper-managed files only.",
             f"Add the EvoZeus-wrapper status check in {instruction_surface} before the target main chain if missing.",
             f"Append the EvoZeus-wrapper section in {instruction_surface} if missing; otherwise append a migration note instead of editing old text.",
-            "Write a migration record under docs/wrapper-migrations/ with from/to wrapper versions, validation, and rollback.",
+            f"Write a migration record under {TARGET_EVOINFRA_DIR}/docs/migrations/ with from/to wrapper versions, validation, and rollback.",
             f"Update {TARGET_WRAPPER_MANIFEST} wrapper_version after validation passes.",
         ],
         "validation": validation,

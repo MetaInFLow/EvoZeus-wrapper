@@ -1,7 +1,7 @@
 {
   "management_mode": "semi_managed",
   "strictness": "medium",
-  "audit_rule": ".evozeus_evoinfra/audit-rule.md",
+  "audit_rule": ".evozeus-wrapper/policies/audit-rule.md",
   "capture_evidence_regex": [
     "Skill Feedback Issue",
     "gh issue create",

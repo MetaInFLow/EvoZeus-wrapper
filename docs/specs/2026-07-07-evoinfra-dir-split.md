@@ -1,5 +1,7 @@
 # EvoInfra Directory Split
 
+> 历史说明：本方案已由 `2026-07-18-consolidated-target-layout.md` 取代。`.evozeus_evoinfra/` 现在只作为 layout v1 迁移输入，不是可继续运行的兼容路径。
+
 ## Related Issue
 
 - Related issue: https://github.com/MetaInFLow/EvoZeus-wrapper/issues/6

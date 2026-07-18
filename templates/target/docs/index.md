@@ -16,12 +16,12 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 | Visibility | `{{VISIBILITY}}` |
 | 当前 Skill 版本 | `{{CURRENT_VERSION}}` |
 | Wrapper harness 版本 | `{{WRAPPER_VERSION}}` |
-| Wrapper manifest | `.evozeus_evoinfra/wrapper.json` |
+| Wrapper manifest | `.evozeus-wrapper/wrapper.json` |
 | Codex hook registration | `.codex/hooks.json` |
-| Codex hook adapter | `.codex/hooks/evozeus_wrapper_start_check.py` |
-| Wrapper migrations | [`docs/wrapper-migrations/`](wrapper-migrations/) |
-| Changelog | [`CHANGELOG.md`]({{REPO_URL}}/blob/main/CHANGELOG.md) |
-| Design docs | [`docs/designs/`](designs/) |
+| Codex hook adapter | `.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py` |
+| Wrapper migrations | [`.evozeus-wrapper/docs/migrations/`](migrations/) |
+| Changelog | [`.evozeus-wrapper/CHANGELOG.md`]({{REPO_URL}}/blob/main/.evozeus-wrapper/CHANGELOG.md) |
+| Design docs | [`.evozeus-wrapper/docs/designs/`](designs/) |
 
 ## 反馈入口
 
@@ -37,7 +37,7 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 
 `SKILL.md` 的 frontmatter 后第一段必须是 `EvoZeus-wrapper 状态检查`。该状态检查先确认当前 Skill release、wrapper harness version 和 source contract；如果当前只是 runtime-only install，不能把安装副本当作事实源，应回 canonical repo 处理维护问题。
 
-`.evozeus_evoinfra/wrapper.json` 的 `integration.mode` 说明当前运行时集成等级：
+`.evozeus-wrapper/wrapper.json` 的 `integration.mode` 说明当前运行时集成等级：
 
 - `native_host_hook`：Codex project-local hook 已注册在 `.codex/hooks.json`，或其他宿主/plugin lifecycle hook 已安装并有证据。
 - `bootstrap_skill`：插件 Skill 基础设施可加载控制 Skill，但没有检测到宿主 lifecycle hook。
@@ -48,7 +48,7 @@ Codex 会从 trusted `.codex/` layer 发现 project-local hook；新建或变更
 
 Wrapper-managed Skill 的源头发现顺序固定：
 
-1. 读取 `.evozeus_evoinfra/wrapper.json`。
+1. 读取 `.evozeus-wrapper/wrapper.json`。
 2. 检查 `~/.evozeus/.projects/{{REPO_NAME}}` 是否指向 canonical repo。
 3. 验证 canonical repo 的 git origin / GitHub repo。
 4. 检查 `~/.codex/skills/<skill-name>` 和 `~/.agents/skills/<skill-name>`，它们只能是 runtime pointer。
@@ -57,8 +57,8 @@ Wrapper-managed Skill 的源头发现顺序固定：
 每次运行 Skill 前，先检查 GitHub latest release 是否有新版本：
 
 ```bash
-python3 scripts/evozeus_wrapper_preflight.py doctor --repo {{REPO_NAME}}
-python3 scripts/evozeus_wrapper_preflight.py version --repo {{REPO_NAME}}
+python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py doctor --repo {{REPO_NAME}}
+python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py version --repo {{REPO_NAME}}
 ```
 
 每次 Skill 更新必须先写 design doc，再开 PR。根目录 `SKILL.md` 是 repo 化后的可运行入口；`~/.evozeus/.projects/{{REPO_NAME}}` 和 runtime 安装路径应指向同一个 canonical repo，不保留 copied install 作为第二事实源，也不要直接修改 `.codex/skills/...` 或 `.agents/skills/...`。
@@ -70,7 +70,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path
 python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/this-skill --latest-version <wrapper-version> --dry-run --json
 ```
 
-迁移记录写入 `docs/wrapper-migrations/`，并记录 from/to wrapper version、planned files、`SKILL.md` 状态检查处理、append-only 处理、验证命令和回滚方案。wrapper harness version 的事实源是 `.evozeus_evoinfra/wrapper.json`；Skill release 仍以 GitHub release 和 `CHANGELOG.md` 为准。
+迁移记录写入 `.evozeus-wrapper/docs/migrations/`，并记录 from/to wrapper version、planned files、`SKILL.md` 状态检查处理、append-only 处理、验证命令和回滚方案。wrapper harness version 的事实源是 `.evozeus-wrapper/wrapper.json`；Skill release 仍以 GitHub release 和 `.evozeus-wrapper/CHANGELOG.md` 为准。
 
 Design doc 至少回答：
 
@@ -92,9 +92,9 @@ Design doc 至少回答：
 ## 上传前检查
 
 ```bash
-python3 scripts/evozeus_wrapper_preflight.py doctor --repo {{REPO_NAME}}
-python3 scripts/evozeus_wrapper_preflight.py structure
-python3 scripts/evozeus_wrapper_preflight.py version --repo {{REPO_NAME}}
-python3 scripts/evozeus_wrapper_preflight.py pr --design-doc docs/designs/<design-doc>.md
-python3 scripts/evozeus_wrapper_preflight.py release --tag {{INITIAL_VERSION}} --release-notes release-notes.md
+python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py doctor --repo {{REPO_NAME}}
+python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py structure
+python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py version --repo {{REPO_NAME}}
+python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py pr --design-doc .evozeus-wrapper/docs/designs/<design-doc>.md
+python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py release --tag {{INITIAL_VERSION}} --release-notes release-notes.md
 ```

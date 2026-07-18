@@ -13,7 +13,8 @@ from evozeus_wrapper_lifecycle import (
     diagnose_skill,
     plan_reinstall,
     plan_harness_upgrade,
-    migrate_target_infra_dir,
+    migrate_target_layout,
+    plan_target_layout_migration,
     plan_feedback_audit,
     classify_pr_permission,
     run_command,
@@ -87,7 +88,7 @@ def main() -> int:
     harness_sub = harness.add_subparsers(dest="command", required=True)
     upgrade_check = harness_sub.add_parser("upgrade-check", help="Check target wrapper harness version.")
     upgrade_check.add_argument("--target", required=True)
-    upgrade_check.add_argument("--latest-version", help="Latest wrapper version, such as v0.7.0.")
+    upgrade_check.add_argument("--latest-version", help="Latest wrapper version, such as v0.8.0.")
     upgrade_check.add_argument("--managed-dirty", action="store_true")
     upgrade_check.add_argument("--json", action="store_true")
     upgrade = harness_sub.add_parser("upgrade", help="Plan wrapper harness upgrade.")
@@ -96,6 +97,14 @@ def main() -> int:
     upgrade.add_argument("--managed-dirty", action="store_true")
     upgrade.add_argument("--dry-run", action="store_true")
     upgrade.add_argument("--json", action="store_true")
+    migrate_layout = harness_sub.add_parser(
+        "migrate-layout",
+        help="Plan or apply the one-time scattered-v1 to consolidated-v2 target layout migration.",
+    )
+    migrate_layout.add_argument("--target", required=True)
+    migrate_layout.add_argument("--latest-version", required=True)
+    migrate_layout.add_argument("--dry-run", action="store_true")
+    migrate_layout.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
     if args.group == "env" and args.command == "diagnose":
@@ -149,9 +158,7 @@ def main() -> int:
                 f"{instruction_surface} self-evolution section",
                 f"{instruction_surface} EvoZeus-wrapper section",
             ]
-        planned_files = REQUIRED_WRAPPER_FILES + [
-            ".evozeus_evoinfra/wrapper.json",
-        ] + surface_planned_files
+        planned_files = REQUIRED_WRAPPER_FILES + surface_planned_files
         report = {
             "stage": "target_skill_transform",
             "mode": args.mode,
@@ -193,11 +200,15 @@ def main() -> int:
         print_report(report, args.json, "loop")
         return 0
     if args.group == "loop" and args.command == "audit":
-        report = plan_feedback_audit(
-            target=Path(args.target),
-            user_input=args.user_input,
-            context=args.context,
-        )
+        try:
+            report = plan_feedback_audit(
+                target=Path(args.target),
+                user_input=args.user_input,
+                context=args.context,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         print_report(report, args.json, "loop")
         return 0
     if args.group == "loop" and args.command == "issue-to-pr":
@@ -229,14 +240,30 @@ def main() -> int:
             )
         else:
             try:
-                report = migrate_target_infra_dir(
+                report = migrate_target_layout(
                     target=Path(args.target),
                     latest_version=args.latest_version,
-                    remove_duplicate_legacy=True,
                 )
             except ValueError as exc:
                 print(str(exc), file=sys.stderr)
                 return 1
+        print_report(report, args.json, "loop")
+        return 0
+    if args.group == "harness" and args.command == "migrate-layout":
+        try:
+            if args.dry_run:
+                report = plan_target_layout_migration(
+                    target=Path(args.target),
+                    latest_version=args.latest_version,
+                )
+            else:
+                report = migrate_target_layout(
+                    target=Path(args.target),
+                    latest_version=args.latest_version,
+                )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         print_report(report, args.json, "loop")
         return 0
 

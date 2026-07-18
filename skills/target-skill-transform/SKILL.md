@@ -14,6 +14,8 @@ Use this stage only after target Skill diagnosis has identified the canonical re
 - `repair`: harness is partial.
 - `verify`: harness is complete or needs structure verification.
 
+If diagnosis returns `migration_required`, run `harness migrate-layout` before entering any transform mode.
+
 ## Commands
 
 ```bash
@@ -37,9 +39,9 @@ python3 scripts/evozeus_wrapper.py skill transform --mode verify --target /absol
 - Hook/plugin-controlled Skill bundles use the instruction surface selected by `skills/evolution-surface-diagnosis/SKILL.md`, for example `skills/<control-skill>/SKILL.md`.
 - Do not create a fake root `SKILL.md`.
 - Other instruction-surface changes are append-only: add the self-evolution method and `EvoZeus-wrapper` section if missing.
-- Add `docs/wrapper-migrations/README.md` so future wrapper harness upgrades have a migration ledger.
+- Add `.evozeus-wrapper/docs/migrations/README.md` so future wrapper harness upgrades have a migration ledger.
 - Do not overwrite existing files without explicit user confirmation.
-- Keep `.evozeus_evoinfra/wrapper.json` as the harness manifest.
+- Keep `.evozeus-wrapper/wrapper.json` as the only operational harness manifest.
 
 ## Stop Conditions
 

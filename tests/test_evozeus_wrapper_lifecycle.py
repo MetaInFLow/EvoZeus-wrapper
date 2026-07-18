@@ -9,8 +9,14 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from scripts.evozeus_wrapper_bootstrap import copy_templates, inject_evolution_method
 from scripts.evozeus_wrapper_lifecycle import (
+    CODEX_START_HOOK_SCRIPT,
     LEGACY_TARGET_WRAPPER_MANIFEST,
+    TARGET_CHANGELOG,
+    TARGET_FEEDBACK_POLICY,
+    TARGET_MIGRATIONS_README,
+    TARGET_PREFLIGHT_SCRIPT,
     TARGET_WRAPPER_MANIFEST,
     build_wrapper_manifest,
     classify_pr_permission,
@@ -21,9 +27,10 @@ from scripts.evozeus_wrapper_lifecycle import (
     diagnose_skill,
     diagnose_source_contract,
     load_wrapper_manifest,
-    migrate_target_infra_dir,
+    migrate_target_layout,
     plan_feedback_audit,
     plan_harness_upgrade,
+    plan_target_layout_migration,
     path_kind,
     plan_reinstall,
     plan_transform_action,
@@ -35,6 +42,8 @@ from scripts.evozeus_wrapper_lifecycle import (
 )
 from scripts.evozeus_wrapper_preflight import (
     check_integration_contract,
+    load_wrapper_manifest as load_preflight_manifest,
+    referenced_runtime_files,
     root_entry_path as preflight_root_entry_path,
 )
 
@@ -116,9 +125,99 @@ class LifecycleBasicsTest(unittest.TestCase):
 
         self.assertEqual(session_start["matcher"], "startup|resume|clear|compact")
         self.assertEqual(handler["type"], "command")
-        self.assertIn("$(git rev-parse --show-toplevel)/.codex/hooks/evozeus_wrapper_start_check.py", handler["command"])
+        self.assertIn(
+            "$(git rev-parse --show-toplevel)/.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py",
+            handler["command"],
+        )
         self.assertEqual(handler["statusMessage"], "Checking EvoZeus wrapper harness")
         self.assertFalse(Path("templates/target/hooks/hooks-codex.json").exists())
+
+    def test_copy_templates_consolidates_wrapper_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            replacements = {
+                "DATE": "2026-07-18",
+                "INITIAL_VERSION": "v0.1.0",
+                "CURRENT_VERSION": "v0.1.0",
+                "REPO_NAME": "MetaInFLow/skill",
+                "REPO_URL": "https://github.com/MetaInFLow/skill",
+                "SKILL_NAME": "skill",
+                "VISIBILITY": "private",
+                "WRAPPER_VERSION": "v0.8.0",
+            }
+
+            copy_templates(target, replacements, force=False)
+
+            self.assertTrue((target / ".evozeus-wrapper/CHANGELOG.md").is_file())
+            self.assertTrue((target / ".evozeus-wrapper/WRAPPER.md").is_file())
+            self.assertTrue((target / TARGET_PREFLIGHT_SCRIPT).is_file())
+            self.assertTrue((target / CODEX_START_HOOK_SCRIPT).is_file())
+            self.assertTrue((target / ".evozeus-wrapper/docs/index.md").is_file())
+            self.assertTrue((target / ".codex/hooks.json").is_file())
+            self.assertTrue((target / ".github/ISSUE_TEMPLATE/skill-feedback.yml").is_file())
+            self.assertFalse((target / "CHANGELOG.md").exists())
+            self.assertFalse((target / "WRAPPER.md").exists())
+            self.assertFalse((target / "docs").exists())
+            self.assertFalse((target / "scripts").exists())
+
+    def test_consolidated_bootstrap_output_passes_structure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text(
+                '---\nname: "skill"\n---\n# Skill\n\nRun the business flow.\n',
+                encoding="utf-8",
+            )
+            replacements = {
+                "DATE": "2026-07-18",
+                "INITIAL_VERSION": "v0.1.0",
+                "CURRENT_VERSION": "v0.1.0",
+                "REPO_NAME": "MetaInFLow/skill",
+                "REPO_URL": "https://github.com/MetaInFLow/skill",
+                "SKILL_NAME": "skill",
+                "VISIBILITY": "private",
+                "WRAPPER_VERSION": "v0.8.0",
+            }
+            copy_templates(target, replacements, force=False)
+            inject_evolution_method(target, replacements)
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest(
+                    "MetaInFLow/skill",
+                    "v0.8.0",
+                    [
+                        TARGET_CHANGELOG,
+                        ".evozeus-wrapper/WRAPPER.md",
+                        ".codex/hooks.json",
+                        CODEX_START_HOOK_SCRIPT,
+                    ],
+                    [],
+                ),
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(target / TARGET_PREFLIGHT_SCRIPT), "structure", "--target", str(target)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            skill_text = (target / "SKILL.md").read_text(encoding="utf-8")
+            self.assertIn("## EvoZeus-wrapper 状态检查", skill_text)
+            self.assertIn("## 自进化方法", skill_text)
+            self.assertIn(TARGET_WRAPPER_MANIFEST, skill_text)
+
+    def test_preflight_rejects_legacy_layout_until_migrated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            legacy = target / LEGACY_TARGET_WRAPPER_MANIFEST
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text('{"canonical_repo":"MetaInFLow/skill"}\n', encoding="utf-8")
+
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                load_preflight_manifest(target)
 
     def test_bootstrap_status_language_is_runtime_safe(self):
         checked_files = [
@@ -175,6 +274,11 @@ class LifecycleBasicsTest(unittest.TestCase):
 
             self.assertEqual(str(entry.relative_to(target)), "skills/session-bootstrap/SKILL.md")
 
+    def test_runtime_reference_parser_excludes_command_arguments(self):
+        text = "Run `scripts/research_search.py --plan path/to/plan.json --out output.jsonl`."
+
+        self.assertEqual(referenced_runtime_files(text), ["scripts/research_search.py"])
+
     def test_write_wrapper_manifest_uses_target_evoinfra_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "skill"
@@ -188,7 +292,7 @@ class LifecycleBasicsTest(unittest.TestCase):
             self.assertTrue((target / TARGET_WRAPPER_MANIFEST).is_file())
             self.assertFalse((target / LEGACY_TARGET_WRAPPER_MANIFEST).exists())
 
-    def test_load_wrapper_manifest_falls_back_to_legacy_manifest(self):
+    def test_load_wrapper_manifest_detects_legacy_manifest_for_migration(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "skill"
             target.mkdir()
@@ -199,13 +303,15 @@ class LifecycleBasicsTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            manifest = load_wrapper_manifest(target)
+            manifest = load_wrapper_manifest(target, allow_legacy=True)
             status = wrapper_manifest_status(target)
 
             self.assertEqual(manifest["canonical_repo"], "MetaInFLow/skill")
             self.assertTrue(status["legacy_manifest_detected"])
             self.assertTrue(status["migration_required"])
-            self.assertEqual(status["manifest_source"], "legacy")
+            self.assertEqual(status["manifest_source"], "legacy_evoinfra")
+            with self.assertRaises(ValueError):
+                load_wrapper_manifest(target)
 
     def test_load_wrapper_manifest_rejects_conflicting_current_and_legacy_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -227,7 +333,7 @@ class LifecycleBasicsTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_wrapper_manifest(target)
 
-    def test_migrate_target_infra_dir_moves_legacy_files_and_rewrites_references(self):
+    def test_migrate_target_layout_moves_legacy_files_and_rewrites_references(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "skill"
             target.mkdir()
@@ -258,18 +364,80 @@ class LifecycleBasicsTest(unittest.TestCase):
             )
             (legacy_dir / "audit-rule.md").write_text("# Rule\n", encoding="utf-8")
 
-            report = migrate_target_infra_dir(target, latest_version="v0.6.0")
+            report = migrate_target_layout(target, latest_version="v0.8.0", today=date(2026, 7, 18))
             manifest = load_wrapper_manifest(target)
             skill_text = (target / "SKILL.md").read_text(encoding="utf-8")
-            policy = (target / ".evozeus_evoinfra" / "feedback-policy.json").read_text(encoding="utf-8")
+            policy = (target / TARGET_FEEDBACK_POLICY).read_text(encoding="utf-8")
 
-            self.assertIn("move .evozeus/ -> .evozeus_evoinfra/", report["actions"])
+            self.assertIn(
+                "move .evozeus/wrapper.json -> .evozeus-wrapper/wrapper.json",
+                report["actions"],
+            )
             self.assertFalse((target / ".evozeus").exists())
             self.assertTrue((target / TARGET_WRAPPER_MANIFEST).is_file())
-            self.assertEqual(manifest["wrapper_version"], "v0.6.0")
-            self.assertIn(".evozeus_evoinfra/wrapper.json", manifest["managed_files"])
-            self.assertIn(".evozeus_evoinfra/wrapper.json", skill_text)
-            self.assertIn(".evozeus_evoinfra/audit-rule.md", policy)
+            self.assertEqual(manifest["wrapper_version"], "v0.8.0")
+            self.assertEqual(manifest["layout_version"], 2)
+            self.assertIn(TARGET_PREFLIGHT_SCRIPT, manifest["managed_files"])
+            self.assertIn(TARGET_WRAPPER_MANIFEST, skill_text)
+            self.assertIn(".evozeus-wrapper/policies/audit-rule.md", policy)
+            self.assertTrue(
+                (target / ".evozeus-wrapper/docs/migrations/2026-07-18-layout-v1-to-v2.md").is_file()
+            )
+            self.assertIn(
+                'TARGET_EVOINFRA_DIR = ".evozeus-wrapper"',
+                (target / TARGET_PREFLIGHT_SCRIPT).read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "source: ./.evozeus-wrapper/docs",
+                (target / ".github/workflows/evozeus-wrapper-preflight.yml").read_text(encoding="utf-8"),
+            )
+            self.assertFalse(wrapper_manifest_status(target)["migration_required"])
+
+    def test_layout_migration_conflict_stops_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            legacy_manifest = target / LEGACY_TARGET_WRAPPER_MANIFEST
+            legacy_manifest.parent.mkdir(parents=True)
+            legacy_manifest.write_text(
+                '{"canonical_repo":"MetaInFLow/skill","wrapper_version":"v0.7.0"}\n',
+                encoding="utf-8",
+            )
+            (target / "WRAPPER.md").write_text("legacy wrapper\n", encoding="utf-8")
+            destination = target / ".evozeus-wrapper/WRAPPER.md"
+            destination.parent.mkdir(parents=True)
+            destination.write_text("different new wrapper\n", encoding="utf-8")
+
+            plan = plan_target_layout_migration(target, latest_version="v0.8.0")
+
+            self.assertFalse(plan["can_apply"])
+            self.assertTrue(plan["conflicts"])
+            with self.assertRaises(ValueError):
+                migrate_target_layout(target, latest_version="v0.8.0")
+            self.assertTrue((target / "WRAPPER.md").is_file())
+            self.assertEqual(destination.read_text(encoding="utf-8"), "different new wrapper\n")
+            self.assertFalse((target / TARGET_WRAPPER_MANIFEST).exists())
+
+    def test_layout_migration_is_idempotent_for_layout_v2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.8.0", [], []),
+            )
+            (target / "CHANGELOG.md").write_text(
+                "# Business changelog not owned by wrapper\n",
+                encoding="utf-8",
+            )
+
+            plan = plan_target_layout_migration(target, latest_version="v0.8.0")
+            result = migrate_target_layout(target, latest_version="v0.8.0")
+
+            self.assertFalse(plan["migration_required"])
+            self.assertEqual(plan["moves"], [])
+            self.assertFalse(result["writes"])
+            self.assertTrue((target / "CHANGELOG.md").is_file())
 
     def test_plan_feedback_audit_captures_wrapper_defect(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -279,9 +447,10 @@ class LifecycleBasicsTest(unittest.TestCase):
                 target,
                 build_wrapper_manifest("MetaInFLow/skill", "v0.6.0", [], []),
             )
-            policy_path = target / ".evozeus_evoinfra" / "feedback-policy.json"
+            policy_path = target / TARGET_FEEDBACK_POLICY
+            policy_path.parent.mkdir(parents=True, exist_ok=True)
             policy_path.write_text(
-                '{"management_mode":"semi_managed","audit_rule":".evozeus_evoinfra/audit-rule.md"}\n',
+                '{"management_mode":"semi_managed","audit_rule":".evozeus-wrapper/policies/audit-rule.md"}\n',
                 encoding="utf-8",
             )
 
@@ -293,7 +462,7 @@ class LifecycleBasicsTest(unittest.TestCase):
             self.assertTrue(report["should_capture"])
             self.assertEqual(report["route"], "wrapper")
             self.assertEqual(report["issue_repo"], "MetaInFLow/EvoZeus-wrapper")
-            self.assertEqual(report["policy_path"], ".evozeus_evoinfra/feedback-policy.json")
+            self.assertEqual(report["policy_path"], TARGET_FEEDBACK_POLICY)
             self.assertIn("gh issue create --repo MetaInFLow/EvoZeus-wrapper", report["issue_create_command"])
 
     def test_preflight_rejects_native_hook_mode_without_hook_evidence(self):
@@ -322,9 +491,11 @@ class LifecycleBasicsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "wrapped-skill"
             target.mkdir()
-            (target / ".codex" / "hooks").mkdir(parents=True)
+            (target / ".codex").mkdir(parents=True)
             (target / ".codex" / "hooks.json").write_text('{"hooks":{}}', encoding="utf-8")
-            (target / ".codex" / "hooks" / "evozeus_wrapper_start_check.py").write_text(
+            hook_script = target / CODEX_START_HOOK_SCRIPT
+            hook_script.parent.mkdir(parents=True)
+            hook_script.write_text(
                 "#!/usr/bin/env python3\n",
                 encoding="utf-8",
             )
@@ -418,7 +589,7 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             self.assertEqual(report["installs"][0]["kind"], "directory")
             self.assertEqual(report["installs"][0]["matches_target_skill_md"], True)
 
-    def test_diagnose_skill_marks_partial_harness_when_some_wrapper_files_exist(self):
+    def test_diagnose_skill_marks_scattered_harness_as_migration_required(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
             home.mkdir()
@@ -428,8 +599,8 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             (target / "CHANGELOG.md").write_text("# Changelog\n", encoding="utf-8")
 
             report = diagnose_skill(target=target, repo=None, skill_name=None, home=home)
-            self.assertEqual(report["harness"]["state"], "partial")
-            self.assertIn("CHANGELOG.md", report["harness"]["present_files"])
+            self.assertEqual(report["harness"]["state"], "migration_required")
+            self.assertIn("CHANGELOG.md", report["harness"]["legacy_files"])
 
     def test_diagnose_skill_preserves_existing_repo_latest_release(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -672,14 +843,15 @@ class WrapperManifestTest(unittest.TestCase):
             self.assertEqual(loaded["hook_registration"]["codex"]["config_file"], ".codex/hooks.json")
             self.assertEqual(
                 loaded["hook_registration"]["codex"]["hook_script"],
-                ".codex/hooks/evozeus_wrapper_start_check.py",
+                CODEX_START_HOOK_SCRIPT,
             )
+            self.assertEqual(loaded["layout_version"], 2)
 
     def test_build_wrapper_manifest_records_codex_hook_registration_for_complete_harness(self):
         manifest = build_wrapper_manifest(
             "MetaInFLow/skill",
             "v0.7.0",
-            ["WRAPPER.md", ".codex/hooks.json", ".codex/hooks/evozeus_wrapper_start_check.py"],
+            [".evozeus-wrapper/WRAPPER.md", ".codex/hooks.json", CODEX_START_HOOK_SCRIPT],
             [],
         )
 
@@ -824,6 +996,7 @@ class SourceContractTest(unittest.TestCase):
 
 class TransformPlanningTest(unittest.TestCase):
     def test_plan_transform_action_maps_diagnosis_to_mode(self):
+        self.assertEqual(plan_transform_action("migration_required", True), "migrate_layout")
         self.assertEqual(plan_transform_action("missing", False), "bootstrap")
         self.assertEqual(plan_transform_action("missing", True), "adopt")
         self.assertEqual(plan_transform_action("partial", False), "repair")
@@ -922,9 +1095,10 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertEqual(plan["upgrade_status"], "auto_pr")
             self.assertEqual(plan["current_version"], "v0.1.1")
             self.assertEqual(plan["latest_version"], "v0.2.0")
-            self.assertEqual(plan["target_infra_dir"], ".evozeus_evoinfra")
-            self.assertEqual(plan["legacy_infra_dir"], ".evozeus")
-            self.assertEqual(plan["manifest_path"], ".evozeus_evoinfra/wrapper.json")
+            self.assertEqual(plan["target_infra_dir"], ".evozeus-wrapper")
+            self.assertEqual(plan["legacy_infra_dir"], ".evozeus_evoinfra")
+            self.assertEqual(plan["oldest_infra_dir"], ".evozeus")
+            self.assertEqual(plan["manifest_path"], TARGET_WRAPPER_MANIFEST)
             self.assertFalse(plan["legacy_manifest_detected"])
             self.assertFalse(plan["migration_required"])
             self.assertTrue(plan["append_only"])
@@ -932,16 +1106,16 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertFalse(plan["requires_confirmation"])
             self.assertEqual(
                 plan["migration"]["doc_path"],
-                "docs/wrapper-migrations/2026-06-27-v0.1.1-to-v0.2.0.md",
+                ".evozeus-wrapper/docs/migrations/2026-06-27-v0.1.1-to-v0.2.0.md",
             )
             self.assertEqual(plan["integration"]["mode"], "prompt_runtime_check")
             self.assertFalse(plan["integration"]["native_host_hook_installed"])
             self.assertIn("SKILL.md EvoZeus-wrapper status check section (front matter prelude)", plan["planned_files"])
             self.assertIn("SKILL.md EvoZeus-wrapper section or migration note (append only)", plan["planned_files"])
-            self.assertIn("docs/wrapper-migrations/README.md", plan["planned_files"])
-            self.assertIn(".evozeus_evoinfra/wrapper.json", plan["planned_files"])
+            self.assertIn(TARGET_MIGRATIONS_README, plan["planned_files"])
+            self.assertIn(TARGET_WRAPPER_MANIFEST, plan["planned_files"])
             self.assertIn(".codex/hooks.json", plan["planned_files"])
-            self.assertIn(".codex/hooks/evozeus_wrapper_start_check.py", plan["planned_files"])
+            self.assertIn(CODEX_START_HOOK_SCRIPT, plan["planned_files"])
 
     def test_plan_harness_upgrade_requires_repair_when_manifest_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -960,7 +1134,7 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertEqual(plan["migration"]["from_wrapper_version"], None)
             self.assertEqual(
                 plan["migration"]["doc_path"],
-                "docs/wrapper-migrations/2026-06-27-unknown-to-v0.2.0.md",
+                ".evozeus-wrapper/docs/migrations/2026-06-27-unknown-to-v0.2.0.md",
             )
 
     def test_plan_harness_upgrade_uses_agents_root_entry_for_runtime_bundle(self):
@@ -1028,12 +1202,12 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
                 target,
                 build_wrapper_manifest("MetaInFLow/skill", "v0.6.0", ["WRAPPER.md"], []),
             )
-            hook_dir = target / ".codex" / "hooks"
+            hook_dir = (target / CODEX_START_HOOK_SCRIPT).parent
             hook_dir.mkdir(parents=True)
             template = Path("templates/target/.codex/hooks/evozeus_wrapper_start_check.py").read_text(
                 encoding="utf-8"
             )
-            adapter = hook_dir / "evozeus_wrapper_start_check.py"
+            adapter = target / CODEX_START_HOOK_SCRIPT
             adapter.write_text(template.replace("{{WRAPPER_VERSION}}", "v0.7.0"), encoding="utf-8")
 
             advisory = subprocess.run(

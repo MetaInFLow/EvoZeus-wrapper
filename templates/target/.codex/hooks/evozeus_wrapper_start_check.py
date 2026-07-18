@@ -10,8 +10,7 @@ from typing import Any
 
 
 DEFAULT_LATEST_VERSION = "{{WRAPPER_VERSION}}"
-MANIFEST_PATH = ".evozeus_evoinfra/wrapper.json"
-LEGACY_MANIFEST_PATH = ".evozeus/wrapper.json"
+MANIFEST_PATH = ".evozeus-wrapper/wrapper.json"
 LATEST_VERSION_ENV = "EVOZEUS_WRAPPER_LATEST_VERSION"
 ENFORCEMENT_ENV = "EVOZEUS_WRAPPER_HOOK_ENFORCEMENT"
 
@@ -78,7 +77,7 @@ def main() -> int:
         pass
 
     root = repo_root()
-    manifest = read_json(root / MANIFEST_PATH) or read_json(root / LEGACY_MANIFEST_PATH)
+    manifest = read_json(root / MANIFEST_PATH)
     if not manifest:
         return block(
             "EvoZeus wrapper harness manifest is missing or unreadable.",
