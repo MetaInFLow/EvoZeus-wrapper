@@ -12,6 +12,7 @@ try:
     from .evozeus_wrapper_lifecycle import (
         WRAPPER_MANAGED_FILES,
         build_onboarding_contract,
+        build_status_section,
         build_wrapper_manifest,
         write_wrapper_manifest,
     )
@@ -19,6 +20,7 @@ except ImportError:
     from evozeus_wrapper_lifecycle import (
         WRAPPER_MANAGED_FILES,
         build_onboarding_contract,
+        build_status_section,
         build_wrapper_manifest,
         write_wrapper_manifest,
     )
@@ -32,7 +34,7 @@ EVOLUTION_SECTION_HEADING = "## 自进化方法"
 WRAPPER_SECTION_HEADING = "## EvoZeus-wrapper"
 LOCAL_PROJECTS_DIR = Path.home() / ".evozeus" / ".projects"
 INITIAL_VERSION = "v0.1.0"
-WRAPPER_VERSION = "v0.9.0"
+WRAPPER_VERSION = "v0.9.1"
 TARGET_EVOINFRA_DIR = ".evozeus-wrapper"
 TARGET_WRAPPER_MANIFEST = f"{TARGET_EVOINFRA_DIR}/wrapper.json"
 TARGET_CHANGELOG = f"{TARGET_EVOINFRA_DIR}/CHANGELOG.md"
@@ -212,32 +214,6 @@ Target repo: `{replacements["REPO_NAME"]}`
 Visibility: `{replacements["VISIBILITY"]}`
 Current Skill version: `{replacements["CURRENT_VERSION"]}`
 Wrapper harness version: `{replacements["WRAPPER_VERSION"]}`
-"""
-
-
-def build_status_section(replacements: dict[str, str]) -> str:
-    return f"""\
-{STATUS_SECTION_HEADING}
-
-执行本 Skill 主链路前，优先完成状态检查。若当前只是 runtime-only install，缺少维护资产时不要把安装副本当作事实源，回 canonical repo 处理 wrapper harness 或 Skill release。
-
-本检查的运行时集成等级记录在 `{TARGET_WRAPPER_MANIFEST}` 的 `integration.mode`。只有 `native_host_hook` 表示 Codex project-local hook 或其他宿主/plugin lifecycle hook 会自动触发；`prompt_runtime_check` 只是说明入口要求 agent 执行检查，不是真 hook；`hook start-check` 这类 wrapper CLI 命令只有被宿主自动调用时才算 runtime hook。
-
-1. Skill release 状态
-   - 当前记录版本：`{replacements["CURRENT_VERSION"]}`
-   - 检查命令：`python3 {TARGET_PREFLIGHT_SCRIPT} version --repo {replacements["REPO_NAME"]}`
-   - 如果 GitHub latest release 更新：先更新 canonical repo，并确认 runtime install 仍指向 canonical repo。
-   - 如果本地版本领先 GitHub release：先完成 changelog、验证和 `vMAJOR.MINOR.PATCH` release，再把它当作稳定运行版本。
-2. Wrapper harness 状态
-   - 当前 wrapper 版本：`{replacements["WRAPPER_VERSION"]}`
-   - 事实源：`{TARGET_WRAPPER_MANIFEST}`
-   - 检查命令：在 EvoZeus-wrapper repo 运行 `python3 scripts/evozeus_wrapper.py harness upgrade-check --target <this-skill-repo> --json`
-   - 如果 wrapper 落后：先运行 `harness upgrade --dry-run` 生成迁移方案，再按状态检查前置、其他 wrapper 内容 append-only 的规则迁移。
-3. Source contract 状态
-   - 检查命令：`python3 {TARGET_PREFLIGHT_SCRIPT} doctor --repo {replacements["REPO_NAME"]}`
-   - 如果 `~/.evozeus/.projects`、git origin 或 runtime install 不一致：先修复为同一个 canonical repo，再继续。
-
-解决顺序：先修 source contract，再修 wrapper harness，最后处理 Skill release；状态已确认或已记录为 runtime-only fallback 后，再进入主链路。
 """
 
 
@@ -427,7 +403,11 @@ def main() -> int:
     print('git commit -m "Initialize wrapped Skill dashboard"')
     print(f"gh repo create {args.repo} --source . {visibility_flag} --push")
     print(f'gh release create {INITIAL_VERSION} --repo {args.repo} --target main --title "{INITIAL_VERSION}" --notes "Initial wrapped Skill harness for {skill_name}."')
-    print(f"gh api --method POST repos/{args.repo}/pages -f build_type=workflow")
+    if visibility == "public":
+        print(f"gh api --method POST repos/{args.repo}/pages -f build_type=workflow")
+        print(f"gh variable set EVOZEUS_PAGES_ENABLED --body true --repo {args.repo}")
+    else:
+        print("Private repo: keep Pages in repository-only mode unless plan support is confirmed.")
     print(f"gh workflow run evozeus-wrapper-preflight.yml --repo {args.repo}")
     return 0
 

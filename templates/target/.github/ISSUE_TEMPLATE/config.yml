@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Read the Skill dashboard
-    url: "{{REPO_URL}}/tree/main/docs"
+    url: "{{REPO_URL}}/tree/main/.evozeus-wrapper/docs"
     about: Check the current Skill status before opening feedback.

@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - ".evozeus-wrapper/docs/**"
+      - ".evozeus-wrapper/**"
+      - ".codex/hooks.json"
       - ".github/workflows/evozeus-wrapper-preflight.yml"
   workflow_dispatch:
   issues:
@@ -24,6 +25,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validation:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate wrapper maintainer structure
+        run: python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py maintainer
+      - name: Report Pages deployment mode
+        env:
+          PAGES_ENABLED: ${{ vars.EVOZEUS_PAGES_ENABLED }}
+        run: |
+          if [ "$PAGES_ENABLED" = "true" ]; then
+            echo "GitHub Pages deployment is enabled for this repository."
+          else
+            echo "::notice::GitHub Pages deployment is disabled; wrapper validation passed in repository-only mode."
+          fi
+
   issue:
     if: github.event_name == 'issues'
     runs-on: ubuntu-latest
@@ -67,7 +85,8 @@ jobs:
         run: python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py release --tag "${{ github.event.release.tag_name }}" --release-notes /tmp/release-notes.md --skip-gh
 
   pages:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: validation
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && vars.EVOZEUS_PAGES_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

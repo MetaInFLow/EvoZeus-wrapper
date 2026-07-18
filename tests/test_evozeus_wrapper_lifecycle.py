@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.evozeus_wrapper_bootstrap import (
+    build_evolution_section,
     build_status_section,
     build_wrapper_section,
     copy_templates,
@@ -57,6 +58,92 @@ from scripts.evozeus_wrapper_preflight import (
     referenced_runtime_files,
     root_entry_path as preflight_root_entry_path,
 )
+
+
+def create_complete_legacy_target(target: Path) -> str:
+    replacements = {
+        "CURRENT_VERSION": "v1.2.3",
+        "REPO_NAME": "MetaInFLow/legacy-skill",
+        "VISIBILITY": "private",
+        "WRAPPER_VERSION": "v0.6.0",
+    }
+    status = build_status_section(replacements).replace(
+        "harness upgrade-check --target <this-skill-repo> --json",
+        "harness upgrade-check --target <this-skill-repo> --latest-version <wrapper-version> --json",
+    )
+    wrapper = build_wrapper_section(replacements).replace(
+        "harness upgrade-check --target <this-skill-repo> --json",
+        "harness upgrade-check --target <this-skill-repo> --latest-version <wrapper-version> --json",
+    )
+    business = (
+        "## Business Logic\n\n"
+        "PRESERVE-BUSINESS-BYTES https://example.test/tree/main/docs\n\n"
+    )
+    skill_text = (
+        '---\nname: "legacy-skill"\n---\n\n'
+        + status.rstrip()
+        + "\n\n"
+        + business
+        + build_evolution_section(replacements).rstrip()
+        + "\n\n"
+        + wrapper.rstrip()
+        + "\n"
+    )
+    (target / "SKILL.md").write_text(skill_text, encoding="utf-8")
+
+    legacy = target / ".evozeus_evoinfra"
+    legacy.mkdir(parents=True)
+    legacy_manifest = {
+        "wrapper_repo": "MetaInFLow/EvoZeus-wrapper",
+        "wrapper_version": "v0.6.0",
+        "canonical_repo": "MetaInFLow/legacy-skill",
+        "managed_files": [],
+        "install_links": [],
+        "integration": {"mode": "prompt_runtime_check", "native_host_hook_installed": False},
+    }
+    (legacy / "wrapper.json").write_text(
+        json.dumps(legacy_manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (legacy / "feedback-policy.json").write_text(
+        '{"management_mode":"manual","audit_rule":".evozeus_evoinfra/audit-rule.md"}\n',
+        encoding="utf-8",
+    )
+    (legacy / "audit-rule.md").write_text("# Feedback Audit Rule\n\nPreserve evidence.\n", encoding="utf-8")
+
+    fixture_files = {
+        "CHANGELOG.md": "# Changelog\n\n## [v1.2.3] - 2026-07-01\n\n- Existing release.\n",
+        "WRAPPER.md": "# Legacy Wrapper\n\nRead `.evozeus_evoinfra/wrapper.json`.\n",
+        "docs/index.md": "# Legacy Dashboard\n\nRead `../CHANGELOG.md`.\n",
+        "docs/_config.yml": 'title: "Legacy Skill"\n',
+        "docs/design-doc-template.md": "# Design Doc\n\n## Related issue\n\n## Verification plan\n",
+        "docs/designs/README.md": "# Designs\n\nStore design docs here.\n",
+        "docs/wrapper-migrations/README.md": "# Wrapper Migrations\n\nRecord migrations here.\n",
+        "scripts/evozeus_wrapper_preflight.py": Path("scripts/evozeus_wrapper_preflight.py").read_text(
+            encoding="utf-8"
+        ),
+        ".github/ISSUE_TEMPLATE/config.yml": (
+            "blank_issues_enabled: false\ncontact_links:\n"
+            "  - name: Read the Skill dashboard\n"
+            "    url: \"https://github.com/MetaInFLow/legacy-skill/tree/main/docs\"\n"
+            "    about: Check status first.\n"
+        ),
+        ".github/ISSUE_TEMPLATE/skill-feedback.yml": Path(
+            "templates/target/.github/ISSUE_TEMPLATE/skill-feedback.yml"
+        ).read_text(encoding="utf-8"),
+        ".github/pull_request_template.md": Path(
+            "templates/target/.github/pull_request_template.md"
+        ).read_text(encoding="utf-8"),
+        ".github/workflows/evozeus-wrapper-preflight.yml": Path(
+            "templates/target/.github/workflows/evozeus-wrapper-preflight.yml"
+        ).read_text(encoding="utf-8"),
+    }
+    for rel, content in fixture_files.items():
+        path = target / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    (target / "scripts/evozeus_wrapper_preflight.py").chmod(0o755)
+    return business
 
 
 class LifecycleBasicsTest(unittest.TestCase):
@@ -142,6 +229,18 @@ class LifecycleBasicsTest(unittest.TestCase):
         )
         self.assertEqual(handler["statusMessage"], "Checking EvoZeus wrapper harness")
         self.assertFalse(Path("templates/target/hooks/hooks-codex.json").exists())
+
+    def test_pages_workflow_keeps_validation_active_when_deployment_is_disabled(self):
+        workflow = Path("templates/target/.github/workflows/evozeus-wrapper-preflight.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("  validation:\n", workflow)
+        self.assertIn("preflight.py maintainer", workflow)
+        self.assertIn("Report Pages deployment mode", workflow)
+        self.assertIn("needs: validation", workflow)
+        self.assertIn("vars.EVOZEUS_PAGES_ENABLED == 'true'", workflow)
+        self.assertIn('\".evozeus-wrapper/**\"', workflow)
 
     def test_copy_templates_consolidates_wrapper_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -362,34 +461,26 @@ class LifecycleBasicsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "skill"
             target.mkdir()
-            (target / "SKILL.md").write_text(
-                "Read `.evozeus/wrapper.json` and `.evozeus/feedback-policy.json`.\n",
-                encoding="utf-8",
-            )
+            create_complete_legacy_target(target)
+            old_legacy_dir = target / ".evozeus_evoinfra"
             legacy_dir = target / ".evozeus"
-            legacy_dir.mkdir()
+            old_legacy_dir.rename(legacy_dir)
+            legacy_manifest = json.loads((legacy_dir / "wrapper.json").read_text(encoding="utf-8"))
+            legacy_manifest["wrapper_version"] = "v0.5.0"
             (legacy_dir / "wrapper.json").write_text(
-                json.dumps(
-                    {
-                        "canonical_repo": "MetaInFLow/skill",
-                        "wrapper_version": "v0.5.0",
-                        "managed_files": [
-                            ".evozeus/wrapper.json",
-                            ".evozeus/feedback-policy.json",
-                            ".evozeus/audit-rule.md",
-                        ],
-                    }
-                )
-                + "\n",
-                encoding="utf-8",
+                json.dumps(legacy_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
             )
             (legacy_dir / "feedback-policy.json").write_text(
                 '{"audit_rule":".evozeus/audit-rule.md"}\n',
                 encoding="utf-8",
             )
-            (legacy_dir / "audit-rule.md").write_text("# Rule\n", encoding="utf-8")
+            skill_path = target / "SKILL.md"
+            skill_path.write_text(
+                skill_path.read_text(encoding="utf-8").replace(".evozeus-wrapper", ".evozeus"),
+                encoding="utf-8",
+            )
 
-            report = migrate_target_layout(target, latest_version="v0.8.0", today=date(2026, 7, 18))
+            report = migrate_target_layout(target, latest_version="v0.9.1", today=date(2026, 7, 18))
             manifest = load_wrapper_manifest(target)
             skill_text = (target / "SKILL.md").read_text(encoding="utf-8")
             policy = (target / TARGET_FEEDBACK_POLICY).read_text(encoding="utf-8")
@@ -400,7 +491,7 @@ class LifecycleBasicsTest(unittest.TestCase):
             )
             self.assertFalse((target / ".evozeus").exists())
             self.assertTrue((target / TARGET_WRAPPER_MANIFEST).is_file())
-            self.assertEqual(manifest["wrapper_version"], "v0.8.0")
+            self.assertEqual(manifest["wrapper_version"], "v0.9.1")
             self.assertEqual(manifest["layout_version"], 2)
             self.assertIn(TARGET_PREFLIGHT_SCRIPT, manifest["managed_files"])
             self.assertIn(TARGET_ONBOARDING_GUIDE, manifest["managed_files"])
@@ -421,6 +512,145 @@ class LifecycleBasicsTest(unittest.TestCase):
                 (target / ".github/workflows/evozeus-wrapper-preflight.yml").read_text(encoding="utf-8"),
             )
             self.assertFalse(wrapper_manifest_status(target)["migration_required"])
+
+    def test_migrate_layout_produces_complete_native_hook_harness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "legacy-skill"
+            target.mkdir()
+            business = create_complete_legacy_target(target)
+            before = (target / "SKILL.md").read_text(encoding="utf-8")
+            before_business = before.split("## Business Logic", 1)[1].split("## 自进化方法", 1)[0]
+
+            report = migrate_target_layout(
+                target,
+                latest_version="v0.9.1",
+                today=date(2026, 7, 18),
+            )
+            manifest = load_wrapper_manifest(target)
+            skill_text = (target / "SKILL.md").read_text(encoding="utf-8")
+            after_business = skill_text.split("## Business Logic", 1)[1].split("## 自进化方法", 1)[0]
+            hooks = json.loads((target / ".codex/hooks.json").read_text(encoding="utf-8"))
+
+            self.assertTrue(report["writes"])
+            self.assertEqual(before_business, after_business)
+            self.assertIn(business.strip(), skill_text)
+            self.assertIn("v0.9.1", skill_text.split("## Business Logic", 1)[0])
+            self.assertNotIn("--latest-version <wrapper-version>", skill_text)
+            self.assertIn("v0.6.0 -> v0.9.1", skill_text)
+            self.assertEqual(manifest["integration"]["mode"], "native_host_hook")
+            self.assertTrue(manifest["integration"]["native_host_hook_installed"])
+            self.assertEqual(manifest["hook_registration"]["codex"]["event"], "SessionStart")
+            self.assertIn("SessionStart", hooks["hooks"])
+            self.assertIn(
+                "/tree/main/.evozeus-wrapper/docs",
+                (target / ".github/ISSUE_TEMPLATE/config.yml").read_text(encoding="utf-8"),
+            )
+
+            for command in ("structure", "maintainer", "runtime"):
+                result = subprocess.run(
+                    [sys.executable, str(target / TARGET_PREFLIGHT_SCRIPT), command, "--target", str(target)],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+            hook_env = {**os.environ, "EVOZEUS_WRAPPER_LATEST_VERSION": "v0.9.1"}
+            hook_result = subprocess.run(
+                [sys.executable, str(target / CODEX_START_HOOK_SCRIPT)],
+                input=json.dumps({"hook_event_name": "SessionStart", "source": "startup"}),
+                text=True,
+                capture_output=True,
+                cwd=target,
+                env=hook_env,
+                check=False,
+            )
+            hook_payload = json.loads(hook_result.stdout)
+            self.assertEqual(hook_result.returncode, 0)
+            self.assertTrue(hook_payload["continue"])
+            self.assertIn("current", hook_payload["systemMessage"])
+
+    def test_migrate_layout_blocks_invalid_codex_hooks_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "legacy-skill"
+            target.mkdir()
+            create_complete_legacy_target(target)
+            hooks_path = target / ".codex/hooks.json"
+            hooks_path.parent.mkdir(parents=True)
+            hooks_path.write_text("{not-json\n", encoding="utf-8")
+
+            plan = plan_target_layout_migration(target, latest_version="v0.9.1")
+
+            self.assertFalse(plan["can_apply"])
+            self.assertTrue(any("hooks.json" in conflict for conflict in plan["conflicts"]))
+            with self.assertRaises(ValueError):
+                migrate_target_layout(target, latest_version="v0.9.1")
+            self.assertTrue((target / LEGACY_TARGET_WRAPPER_MANIFEST).is_file())
+            self.assertFalse((target / TARGET_WRAPPER_MANIFEST).exists())
+
+    def test_migrate_layout_preserves_custom_session_start_hook_when_merging(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "legacy-skill"
+            target.mkdir()
+            create_complete_legacy_target(target)
+            hooks_path = target / ".codex/hooks.json"
+            hooks_path.parent.mkdir(parents=True)
+            hooks_path.write_text(
+                json.dumps(
+                    {
+                        "hooks": {
+                            "SessionStart": [
+                                {
+                                    "matcher": "startup",
+                                    "hooks": [{"type": "command", "command": "python3 custom.py"}],
+                                }
+                            ]
+                        }
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            migrate_target_layout(target, latest_version="v0.9.1", today=date(2026, 7, 18))
+            hooks = json.loads(hooks_path.read_text(encoding="utf-8"))["hooks"]["SessionStart"]
+            commands = [hook["command"] for entry in hooks for hook in entry.get("hooks", [])]
+
+            self.assertIn("python3 custom.py", commands)
+            self.assertTrue(any("evozeus_wrapper_start_check.py" in command for command in commands))
+
+    def test_migrate_layout_repairs_incomplete_existing_v2_harness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "legacy-skill"
+            target.mkdir()
+            create_complete_legacy_target(target)
+            migrate_target_layout(target, latest_version="v0.9.0", today=date(2026, 7, 17))
+
+            (target / ".codex/hooks.json").unlink()
+            manifest_path = target / TARGET_WRAPPER_MANIFEST
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["wrapper_version"] = "v0.9.0"
+            manifest["integration"] = {
+                "mode": "prompt_runtime_check",
+                "native_host_hook_installed": False,
+            }
+            manifest.pop("dashboard", None)
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            plan = plan_target_layout_migration(target, latest_version="v0.9.1", today=date(2026, 7, 18))
+            report = migrate_target_layout(target, latest_version="v0.9.1", today=date(2026, 7, 18))
+            repaired = load_wrapper_manifest(target)
+
+            self.assertTrue(plan["migration_required"])
+            self.assertEqual(plan["from_layout"], "consolidated-v2")
+            self.assertTrue(report["writes"])
+            self.assertTrue((target / ".codex/hooks.json").is_file())
+            self.assertEqual(repaired["wrapper_version"], "v0.9.1")
+            self.assertEqual(repaired["integration"]["mode"], "native_host_hook")
+            self.assertEqual(repaired["dashboard"]["deployment_mode"], "opt_in_github_pages")
+            self.assertTrue(
+                (target / ".evozeus-wrapper/docs/migrations/2026-07-18-v0.9.0-to-v0.9.1.md").is_file()
+            )
 
     def test_layout_migration_conflict_stops_before_writing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -875,6 +1105,8 @@ class WrapperManifestTest(unittest.TestCase):
                 CODEX_START_HOOK_SCRIPT,
             )
             self.assertEqual(loaded["layout_version"], 2)
+            self.assertEqual(loaded["dashboard"]["deployment_mode"], "opt_in_github_pages")
+            self.assertEqual(loaded["dashboard"]["enablement_variable"], "EVOZEUS_PAGES_ENABLED")
             self.assertEqual(loaded["onboarding"]["installation"]["mode"], "canonical_repo_symlink")
             self.assertFalse(loaded["onboarding"]["initialization"]["required"])
             self.assertFalse(loaded["onboarding"]["generated_child_skills"]["hooks_inherited"])

@@ -354,6 +354,19 @@ def check_onboarding_contract(manifest: dict | None) -> None:
     ok("onboarding contract is complete")
 
 
+def check_dashboard_contract(manifest: dict | None) -> None:
+    dashboard = (manifest or {}).get("dashboard")
+    if not isinstance(dashboard, dict):
+        fail("wrapper manifest must contain a dashboard deployment contract")
+    if dashboard.get("deployment_mode") != "opt_in_github_pages":
+        fail("dashboard.deployment_mode must be opt_in_github_pages")
+    if dashboard.get("enablement_variable") != "EVOZEUS_PAGES_ENABLED":
+        fail("dashboard.enablement_variable must be EVOZEUS_PAGES_ENABLED")
+    if dashboard.get("fallback") != "repository_only":
+        fail("dashboard.fallback must be repository_only")
+    ok("dashboard deployment contract is complete")
+
+
 def skill_name_from_skill_md(path: Path) -> str | None:
     if not path.exists():
         return None
@@ -619,6 +632,7 @@ def check_maintainer(args: argparse.Namespace) -> None:
         fail("missing required maintainer wrapper files:\n" + "\n".join(f"- {path}" for path in missing))
     manifest = load_wrapper_manifest(target)
     check_onboarding_contract(manifest)
+    check_dashboard_contract(manifest)
     check_integration_contract(target, manifest)
     entry = root_entry_path(target)
     entry_text = read_text(entry)

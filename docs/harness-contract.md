@@ -17,7 +17,7 @@ environment diagnosis
   -> PR
   -> CHANGELOG
   -> release
-  -> GitHub Pages dashboard
+  -> repo dashboard + optional GitHub Pages deployment
 ```
 
 ## Before / After Contract
@@ -25,7 +25,7 @@ environment diagnosis
 | 阶段 | 文件和能力 |
 | --- | --- |
 | Before | 本地 Skill 文件夹，至少包含 `SKILL.md` |
-| After | canonical GitHub repo、GitHub Pages、`.evozeus-wrapper/` canonical harness、Issue template、PR template、host hook entrypoint、runtime symlink |
+| After | canonical GitHub repo、repo dashboard、可选 GitHub Pages、`.evozeus-wrapper/` canonical harness、Issue template、PR template、host hook entrypoint、runtime symlink |
 
 ## Runtime Integration Contract
 
@@ -72,7 +72,7 @@ wrapper-managed Skill 的源头发现顺序固定，不允许跳过：
 
 | 问题 | 产物 |
 | --- | --- |
-| 用户在哪里看这个 Skill 的当前状态？ | `.evozeus-wrapper/docs/index.md` + GitHub Pages |
+| 用户在哪里看这个 Skill 的当前状态？ | `.evozeus-wrapper/docs/index.md`；确认能力后可启用 GitHub Pages |
 | 使用中结果不满意怎么反馈？ | `.github/ISSUE_TEMPLATE/skill-feedback.yml` |
 | 修改 Skill 前怎么想清楚？ | `.evozeus-wrapper/docs/design-doc-template.md` + `.evozeus-wrapper/docs/designs/*.md` |
 | 每次迭代怎么留下记录？ | `.evozeus-wrapper/CHANGELOG.md` |
@@ -84,12 +84,12 @@ wrapper-managed Skill 的源头发现顺序固定，不允许跳过：
 
 创建目标 GitHub repo 前，必须让用户选择：
 
-- `public`：适合公开 Skill、公开问题反馈和公开 Pages。
+- `public`：适合公开 Skill、公开问题反馈；确认 Pages 已启用后设置 `EVOZEUS_PAGES_ENABLED=true`。
 - `private`：适合内部 Skill、客户相关 Skill 或尚未审查的 Skill。
 
 不要默认选择。`public/private` 是产品边界，不是技术细节。
 
-注意：private repo 的 GitHub Pages 可用性取决于 GitHub plan；并且 Pages 发布面可能仍能被外部访问。敏感内容不能进入 `.evozeus-wrapper/docs/`。
+注意：private repo 的 GitHub Pages 可用性取决于 GitHub plan。默认保持 repository-only mode，不设置 `EVOZEUS_PAGES_ENABLED=true`；maintainer validation 仍必须运行并成功。Pages 发布面可能被外部访问，敏感内容不能进入 `.evozeus-wrapper/docs/`。
 
 ## Evolution Contract
 
@@ -124,8 +124,8 @@ python3 scripts/evozeus_wrapper.py loop lesson --dry-run --json
 python3 scripts/evozeus_wrapper.py loop audit --target /absolute/path/to/skill --user-input "<input>" --json
 python3 scripts/evozeus_wrapper.py loop issue-to-pr --dry-run --json
 python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --json
-python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/skill --latest-version v0.9.0 --dry-run --json
-python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/skill --latest-version v0.9.0 --json
+python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/skill --latest-version v0.9.1 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/skill --latest-version v0.9.1 --json
 ```
 
 `loop audit` 默认不写 GitHub；它输出 `should_capture`、`route`、`severity`、脱敏 Issue body 和可执行的 `gh issue create` 命令。`publish reinstall` 先完整预校验；真实目录只有在 `--approve-archive` 下才会归档并替换。写入、发布、创建 Issue、创建 PR、启用 Pages 都必须在诊断报告之后进入用户确认。
@@ -138,10 +138,12 @@ python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/pat
 - Wrapper harness version 描述 EvoZeus-wrapper 注入的模板、脚本和治理逻辑版本。
 - `.evozeus-wrapper/wrapper.json` 必须记录 `layout_version=2`、`wrapper_repo`、`wrapper_version`、`canonical_repo`、`managed_files`、`install_links`、`integration.mode` 和 `onboarding`。
 - `onboarding` 必须覆盖 canonical symlink 安装、目标 Skill 调用、目标所有的初始化，以及不继承父 hook 的子 Skill 单独接入和验证。
+- `dashboard.deployment_mode=opt_in_github_pages`；workflow validation 不依赖 Pages，部署由 `EVOZEUS_PAGES_ENABLED=true` 显式开启。
 - 最新 wrapper 版本默认取 GitHub latest release；来源不可用时必须返回 `latest_unknown` 和查询证据，不能回退为当前版本。
 - wrapper major upgrade 必须用户确认。
 - wrapper upgrade 只能改 harness-managed files，不改目标 Skill 业务规则。
 - wrapper upgrade 必须生成迁移方案，列出每个 source/destination、冲突、保留的宿主接点、验证命令和回滚方案；有冲突时不得写入。
+- layout migration 必须预校验并安全合并 `.codex/hooks.json`，刷新状态段和 manifest integration，追加 migration note，并通过 post-migration structure validation 后才返回成功。
 - 目标 `SKILL.md` 的 frontmatter 后必须先出现 `EvoZeus-wrapper 状态检查`，列出当前 Skill release、wrapper harness version、source contract 检查和对应解决方法；如果当前只是 runtime-only install，不能把安装副本当作事实源，应回 canonical repo 处理维护问题。
 - 目标 `SKILL.md` 中的 `EvoZeus-wrapper` 区域只能追加或补缺；如果已经存在，升级时追加 migration note，不改写旧业务段落。
 - `.evozeus-wrapper/docs/migrations/` 是 wrapper harness 迁移账本；`.evozeus-wrapper/CHANGELOG.md` 仍主要记录目标 Skill 行为 release。

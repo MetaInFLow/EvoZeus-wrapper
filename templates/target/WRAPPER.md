@@ -50,6 +50,10 @@ Read `.evozeus-wrapper/docs/onboarding.md` and the manifest `onboarding` contrac
 
 If this repo is private, do not assume the GitHub Pages output is private. Keep `.evozeus-wrapper/docs/` sanitized.
 
+## Dashboard Deployment
+
+The manifest records `dashboard.deployment_mode=opt_in_github_pages`. Push and workflow dispatch always run wrapper validation. Pages deployment runs only when the repository variable `EVOZEUS_PAGES_ENABLED=true`; otherwise the workflow reports repository-only mode without failing. Set the variable only after confirming that the repository and current GitHub plan support Pages.
+
 ## Evolution Loop
 
 1. The target repo is the canonical Skill source. EvoZeus and runtime installs should point to it instead of keeping copied installs.

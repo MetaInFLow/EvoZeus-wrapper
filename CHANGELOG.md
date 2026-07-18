@@ -6,6 +6,29 @@ All notable changes to EvoZeus-wrapper are recorded here.
 
 - None yet.
 
+## [v0.9.1] - 2026-07-18
+
+### Fixed
+
+- Made `migrate-layout` prevalidate and safely merge `.codex/hooks.json`, preserving unrelated hooks while creating or refreshing exactly one wrapper `SessionStart` registration.
+- Allowed a newer wrapper version to repair an already-consolidated but incomplete v2 harness, with a version-specific migration record.
+- Refreshed the wrapper status prelude, authoritative no-override upgrade command, manifest hook/integration facts, dashboard contract, and append-only migration note during layout migration.
+- Added structure post-validation so an incomplete migration cannot return a successful report.
+- Rewrote the generated dashboard contact link to `.evozeus-wrapper/docs`.
+- Split push/workflow-dispatch validation from optional GitHub Pages deployment. Private or unsupported repositories now pass maintainer validation in repository-only mode instead of failing at `configure-pages`.
+
+### Added
+
+- Added the manifest `dashboard` deployment contract and `EVOZEUS_PAGES_ENABLED=true` opt-in for Pages deployment.
+- Added complete v0.6 legacy-target migration coverage, malformed/custom hook merge coverage, business-section preservation, hook smoke testing, and Pages workflow regression coverage.
+
+### Verification
+
+- `python3 -m pytest -q` (78 passed)
+- `python3 -m py_compile scripts/evozeus_wrapper.py scripts/evozeus_wrapper_bootstrap.py scripts/evozeus_wrapper_lifecycle.py scripts/evozeus_wrapper_preflight.py templates/target/.codex/hooks/evozeus_wrapper_start_check.py`
+- Target JSON/YAML template parsing and temporary complete legacy migration validation.
+- Real v0.7 target copy CLI migration followed by successful maintainer validation.
+
 ## [v0.9.0] - 2026-07-18
 
 ### Added

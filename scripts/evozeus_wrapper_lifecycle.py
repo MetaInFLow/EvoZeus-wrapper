@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -112,6 +113,7 @@ INITIAL_SKILL_VERSION = "v0.1.0"
 VERSION_HEADER_RE = re.compile(r"^##\s+\[?(v\d+\.\d+\.\d+)\]?\b", re.MULTILINE)
 SKILL_STATUS_SECTION = "SKILL.md EvoZeus-wrapper status check section (front matter prelude)"
 SKILL_WRAPPER_SECTION = "SKILL.md EvoZeus-wrapper section or migration note (append only)"
+STATUS_SECTION_HEADING = "## EvoZeus-wrapper 状态检查"
 WRAPPER_MIGRATION_README = TARGET_MIGRATIONS_README
 CONTROL_SKILL_NAME_TOKENS = (
     "bootstrap",
@@ -1313,6 +1315,42 @@ def build_onboarding_contract(
     }
 
 
+def build_dashboard_contract() -> dict[str, str]:
+    return {
+        "deployment_mode": "opt_in_github_pages",
+        "enablement_variable": "EVOZEUS_PAGES_ENABLED",
+        "enabled_value": "true",
+        "fallback": "repository_only",
+        "capability_check": "confirm repository Pages support before enabling deployment",
+    }
+
+
+def build_status_section(replacements: dict[str, str]) -> str:
+    return f"""\
+{STATUS_SECTION_HEADING}
+
+执行本 Skill 主链路前，优先完成状态检查。若当前只是 runtime-only install，缺少维护资产时不要把安装副本当作事实源，回 canonical repo 处理 wrapper harness 或 Skill release。
+
+本检查的运行时集成等级记录在 `{TARGET_WRAPPER_MANIFEST}` 的 `integration.mode`。只有 `native_host_hook` 表示 Codex project-local hook 或其他宿主/plugin lifecycle hook 会自动触发；`prompt_runtime_check` 只是说明入口要求 agent 执行检查，不是真 hook；`hook start-check` 这类 wrapper CLI 命令只有被宿主自动调用时才算 runtime hook。
+
+1. Skill release 状态
+   - 当前记录版本：`{replacements["CURRENT_VERSION"]}`
+   - 检查命令：`python3 {TARGET_PREFLIGHT_SCRIPT} version --repo {replacements["REPO_NAME"]}`
+   - 如果 GitHub latest release 更新：先更新 canonical repo，并确认 runtime install 仍指向 canonical repo。
+   - 如果本地版本领先 GitHub release：先完成 changelog、验证和 `vMAJOR.MINOR.PATCH` release，再把它当作稳定运行版本。
+2. Wrapper harness 状态
+   - 当前 wrapper 版本：`{replacements["WRAPPER_VERSION"]}`
+   - 事实源：`{TARGET_WRAPPER_MANIFEST}`
+   - 检查命令：在 EvoZeus-wrapper repo 运行 `python3 scripts/evozeus_wrapper.py harness upgrade-check --target <this-skill-repo> --json`
+   - 如果 wrapper 落后：先运行 `harness upgrade --dry-run` 生成迁移方案，再按状态检查前置、其他 wrapper 内容 append-only 的规则迁移。
+3. Source contract 状态
+   - 检查命令：`python3 {TARGET_PREFLIGHT_SCRIPT} doctor --repo {replacements["REPO_NAME"]}`
+   - 如果 `~/.evozeus/.projects`、git origin 或 runtime install 不一致：先修复为同一个 canonical repo，再继续。
+
+解决顺序：先修 source contract，再修 wrapper harness，最后处理 Skill release；状态已确认或已记录为 runtime-only fallback 后，再进入主链路。
+"""
+
+
 def build_wrapper_manifest(
     repo: str,
     wrapper_version: str,
@@ -1321,6 +1359,7 @@ def build_wrapper_manifest(
     instruction_surface: str | None = None,
     integration: dict[str, Any] | None = None,
     onboarding: dict[str, Any] | None = None,
+    dashboard: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     default_hook_files = []
     if CODEX_HOOKS_CONFIG in managed_files and CODEX_START_HOOK_SCRIPT in managed_files:
@@ -1336,6 +1375,7 @@ def build_wrapper_manifest(
         "canonical_repo": repo,
         "managed_files": managed_files,
         "install_links": install_links,
+        "dashboard": dashboard if dashboard is not None else build_dashboard_contract(),
         "onboarding": (
             onboarding
             if onboarding is not None
@@ -1464,6 +1504,21 @@ def target_infra_text_files(target: Path) -> list[Path]:
 def rewrite_target_infra_text_file(path: Path) -> bool:
     text = path.read_text(encoding="utf-8")
     updated = rewrite_target_infra_string(text)
+    if updated == text:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    return True
+
+
+def rewrite_dashboard_contact_link(target: Path) -> bool:
+    path = target / ".github" / "ISSUE_TEMPLATE" / "config.yml"
+    if not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8")
+    updated = text.replace(
+        "/tree/main/docs",
+        f"/tree/main/{TARGET_EVOINFRA_DIR}/docs",
+    )
     if updated == text:
         return False
     path.write_text(updated, encoding="utf-8")
@@ -1629,6 +1684,135 @@ def _same_file_contents(left: Path, right: Path) -> bool:
     return left.is_file() and right.is_file() and file_sha256(left) == file_sha256(right)
 
 
+def _codex_hook_template_data() -> dict[str, Any]:
+    template = Path(__file__).resolve().parents[1] / "templates" / "target" / CODEX_HOOKS_CONFIG
+    if not template.is_file():
+        raise ValueError(f"wrapper hook registration template is missing: {template}")
+    try:
+        data = json.loads(template.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid wrapper hook registration template: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("wrapper hook registration template must be a JSON object")
+    return data
+
+
+def _merge_codex_hooks_config(target: Path) -> tuple[dict[str, Any], str]:
+    template = _codex_hook_template_data()
+    wrapper_entry = template["hooks"][CODEX_START_HOOK_EVENT][0]
+    path = target / CODEX_HOOKS_CONFIG
+    if not path.exists():
+        return template, "create"
+    if not path.is_file():
+        raise ValueError(f"{CODEX_HOOKS_CONFIG} must be a regular JSON file")
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid {CODEX_HOOKS_CONFIG}: {exc}") from exc
+    if not isinstance(existing, dict):
+        raise ValueError(f"{CODEX_HOOKS_CONFIG} must contain a JSON object")
+    hooks = existing.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError(f"{CODEX_HOOKS_CONFIG} hooks must be a JSON object")
+    session_start = hooks.setdefault(CODEX_START_HOOK_EVENT, [])
+    if not isinstance(session_start, list):
+        raise ValueError(f"{CODEX_HOOKS_CONFIG} {CODEX_START_HOOK_EVENT} must be a list")
+
+    preserved: list[dict[str, Any]] = []
+    wrapper_entry_found = False
+    for index, entry in enumerate(session_start):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"{CODEX_HOOKS_CONFIG} {CODEX_START_HOOK_EVENT}[{index}] must be an object"
+            )
+        handlers = entry.get("hooks")
+        if not isinstance(handlers, list):
+            raise ValueError(
+                f"{CODEX_HOOKS_CONFIG} {CODEX_START_HOOK_EVENT}[{index}].hooks must be a list"
+            )
+        is_wrapper_entry = any(
+            isinstance(handler, dict)
+            and isinstance(handler.get("command"), str)
+            and "evozeus_wrapper_start_check.py" in handler["command"]
+            for handler in handlers
+        )
+        if is_wrapper_entry:
+            wrapper_entry_found = True
+        else:
+            preserved.append(entry)
+    hooks[CODEX_START_HOOK_EVENT] = [*preserved, wrapper_entry]
+    if existing == json.loads(path.read_text(encoding="utf-8")):
+        return existing, "already_registered"
+    return existing, "refresh" if wrapper_entry_found else "merge"
+
+
+def _replace_markdown_section(text: str, heading: str, replacement: str) -> str:
+    heading_match = re.search(rf"(?m)^{re.escape(heading)}\s*$", text)
+    if heading_match:
+        next_heading = re.search(r"(?m)^##\s+", text[heading_match.end() :])
+        end = heading_match.end() + next_heading.start() if next_heading else len(text)
+        prefix = text[: heading_match.start()].rstrip()
+        suffix = text[end:].lstrip()
+        return f"{prefix}\n\n{replacement.strip()}\n\n{suffix}".rstrip() + "\n"
+
+    insert_at = 0
+    if text.startswith("---\n"):
+        frontmatter_end = text.find("\n---\n", 4)
+        if frontmatter_end >= 0:
+            insert_at = frontmatter_end + len("\n---\n")
+    prefix = text[:insert_at].rstrip()
+    suffix = text[insert_at:].lstrip()
+    return f"{prefix}\n\n{replacement.strip()}\n\n{suffix}".rstrip() + "\n"
+
+
+def _refresh_migration_instruction_surface(
+    target: Path,
+    manifest: dict[str, Any],
+    current_wrapper_version: str | None,
+    latest_wrapper_version: str,
+) -> tuple[str, bool]:
+    architecture = detect_target_architecture(target)
+    surface_rel = manifest.get("instruction_surface") or architecture.get("root_entry") or "SKILL.md"
+    surface = target / surface_rel
+    if not surface.is_file():
+        raise ValueError(f"migration instruction surface is missing: {surface_rel}")
+    original = surface.read_text(encoding="utf-8")
+    canonical_repo = manifest.get("canonical_repo") or "OWNER/REPO"
+    status = build_status_section(
+        {
+            "CURRENT_VERSION": latest_changelog_tag(target) or "unknown",
+            "REPO_NAME": canonical_repo,
+            "WRAPPER_VERSION": latest_wrapper_version,
+        }
+    )
+    updated = _replace_markdown_section(original, STATUS_SECTION_HEADING, status)
+    updated = updated.replace("--latest-version <wrapper-version> ", "")
+    updated = re.sub(
+        r"(?m)^(Wrapper harness version:\s*)`v\d+\.\d+\.\d+`\s*$",
+        rf"\g<1>`{latest_wrapper_version}`",
+        updated,
+    )
+    migration_heading = (
+        "## EvoZeus-wrapper Migration Note: "
+        f"{current_wrapper_version or 'unknown'} -> {latest_wrapper_version}"
+    )
+    if migration_heading not in updated:
+        updated = (
+            updated.rstrip()
+            + "\n\n"
+            + migration_heading
+            + "\n\n"
+            + f"- Wrapper harness: `{current_wrapper_version or 'unknown'} -> {latest_wrapper_version}`\n"
+            + f"- Layout: `scattered-v1 -> consolidated-v2`\n"
+            + "- Host hook registration, status prelude, manifest integration, and managed links were refreshed.\n"
+            + "- Target business rules were preserved.\n"
+        )
+    if updated != original:
+        surface.write_text(updated, encoding="utf-8")
+        return surface_rel, True
+    return surface_rel, False
+
+
 def _legacy_layout_sources(target: Path) -> dict[str, list[Path]]:
     grouped: dict[str, list[Path]] = {}
     manifest_status = wrapper_manifest_status(target)
@@ -1724,11 +1908,36 @@ def plan_target_layout_migration(
         None if manifest_status["conflict"] else load_wrapper_manifest(target, allow_legacy=True)
     )
     current_version = current_manifest.get("wrapper_version") if current_manifest else None
+    layout_migration_required = bool(moves) or manifest_status["migration_required"]
+    version_refresh_required = False
+    if latest_version and current_version:
+        try:
+            version_refresh_required = version_key(latest_version) > version_key(current_version)
+        except ValueError as exc:
+            conflicts.append(str(exc))
+    requires_migration = layout_migration_required or version_refresh_required
+    codex_hooks_update = None
+    instruction_surface = (
+        (current_manifest or {}).get("instruction_surface")
+        or detect_target_architecture(target).get("root_entry")
+        or "SKILL.md"
+    )
+    if requires_migration:
+        try:
+            _, codex_hooks_update = _merge_codex_hooks_config(target)
+        except ValueError as exc:
+            conflicts.append(str(exc))
+        if not (target / instruction_surface).is_file():
+            conflicts.append(f"migration instruction surface is missing: {instruction_surface}")
     migration_record = (
         f"{TARGET_EVOINFRA_DIR}/docs/migrations/"
         f"{(today or date.today()).isoformat()}-layout-v1-to-v2.md"
+        if layout_migration_required
+        else (
+            f"{TARGET_EVOINFRA_DIR}/docs/migrations/"
+            f"{(today or date.today()).isoformat()}-{current_version}-to-{latest_version}.md"
+        )
     )
-    requires_migration = bool(moves) or manifest_status["migration_required"]
     if requires_migration and not manifest_status["active_manifest_path"]:
         conflicts.append("legacy wrapper manifest is missing; repair or adopt the harness before migration")
     if requires_migration and (target / migration_record).exists():
@@ -1738,7 +1947,7 @@ def plan_target_layout_migration(
         "stage": "harness_layout_migration",
         "target": str(target),
         "writes": False,
-        "from_layout": "scattered-v1",
+        "from_layout": "scattered-v1" if layout_migration_required else "consolidated-v2",
         "to_layout": "consolidated-v2",
         "target_wrapper_dir": TARGET_EVOINFRA_DIR,
         "manifest_path": TARGET_WRAPPER_MANIFEST,
@@ -1746,14 +1955,20 @@ def plan_target_layout_migration(
         "current_version": current_version,
         "latest_version": latest_version or current_version,
         "migration_required": requires_migration,
+        "layout_migration_required": layout_migration_required,
+        "version_refresh_required": version_refresh_required,
         "migration_record": migration_record if requires_migration else None,
         "moves": moves,
         "managed_file_refreshes": [
+            CODEX_HOOKS_CONFIG,
             TARGET_PREFLIGHT_SCRIPT,
             CODEX_START_HOOK_SCRIPT,
             TARGET_ONBOARDING_GUIDE,
+            ".github/ISSUE_TEMPLATE/config.yml",
             ".github/workflows/evozeus-wrapper-preflight.yml",
         ],
+        "codex_hooks_update": codex_hooks_update,
+        "instruction_surface": instruction_surface,
         "preserved_host_entrypoints": [
             CODEX_HOOKS_CONFIG,
             ".github/ISSUE_TEMPLATE/",
@@ -1870,32 +2085,63 @@ def migrate_target_layout(
     for path in target_infra_text_files(target):
         if rewrite_target_infra_text_file(path):
             changed_files.append(str(path.relative_to(target)))
+    if rewrite_dashboard_contact_link(target):
+        changed_files.append(".github/ISSUE_TEMPLATE/config.yml")
 
     refreshed_files = _refresh_migrated_managed_files(target, latest_version or plan["current_version"])
     changed_files.extend(refreshed_files)
     actions.extend(f"refresh managed file {path}" for path in refreshed_files)
+
+    merged_hooks, hooks_action = _merge_codex_hooks_config(target)
+    hooks_path = target / CODEX_HOOKS_CONFIG
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    if hooks_action != "already_registered":
+        hooks_path.write_text(json.dumps(merged_hooks, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        changed_files.append(CODEX_HOOKS_CONFIG)
+    actions.append(f"{hooks_action} Codex SessionStart registration in {CODEX_HOOKS_CONFIG}")
 
     manifest_path = wrapper_manifest_path(target)
     if not manifest_path.is_file():
         raise ValueError(f"migration did not produce {TARGET_WRAPPER_MANIFEST}")
     manifest = _read_manifest_json(manifest_path)
     manifest = rewrite_target_infra_json(manifest)
-    manifest["wrapper_version"] = latest_version or manifest.get("wrapper_version")
+    installed_version = latest_version or manifest.get("wrapper_version")
+    if not installed_version:
+        raise ValueError("migration requires a valid wrapper version")
+    instruction_surface, surface_changed = _refresh_migration_instruction_surface(
+        target,
+        manifest,
+        plan["current_version"],
+        installed_version,
+    )
+    if surface_changed:
+        changed_files.append(instruction_surface)
+        actions.append(f"refresh wrapper status and append migration note in {instruction_surface}")
+    refreshed_contract = build_wrapper_manifest(
+        repo=manifest.get("canonical_repo") or "OWNER/REPO",
+        wrapper_version=installed_version,
+        managed_files=WRAPPER_MANAGED_FILES,
+        install_links=manifest.get("install_links") or [],
+        instruction_surface=instruction_surface,
+        integration=detect_target_architecture(target)["integration"],
+        onboarding=manifest.get("onboarding"),
+        dashboard=manifest.get("dashboard"),
+    )
+    manifest["wrapper_repo"] = refreshed_contract["wrapper_repo"]
+    manifest["wrapper_version"] = installed_version
     manifest["applied_at"] = (today or date.today()).isoformat()
     manifest["layout_version"] = 2
     manifest["target_wrapper_dir"] = TARGET_EVOINFRA_DIR
     manifest["target_infra_dir"] = TARGET_EVOINFRA_DIR
-    manifest["migrated_from_layout"] = "scattered-v1"
+    if plan["layout_migration_required"]:
+        manifest["migrated_from_layout"] = "scattered-v1"
     manifest["legacy_layout_dirs"] = [LEGACY_TARGET_EVOINFRA_DIR, OLDEST_TARGET_EVOINFRA_DIR]
     manifest["managed_files"] = WRAPPER_MANAGED_FILES
-    canonical_repo = manifest.get("canonical_repo") or "OWNER/REPO"
-    manifest.setdefault(
-        "onboarding",
-        build_onboarding_contract(
-            repo=canonical_repo,
-            skill_name=skill_name_from_skill_md(target / "SKILL.md") or canonical_repo.split("/")[-1],
-        ),
-    )
+    manifest["hook_registration"] = refreshed_contract["hook_registration"]
+    manifest["integration"] = refreshed_contract["integration"]
+    manifest["onboarding"] = refreshed_contract["onboarding"]
+    manifest["dashboard"] = refreshed_contract["dashboard"]
+    manifest["instruction_surface"] = instruction_surface
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     changed_files.append(TARGET_WRAPPER_MANIFEST)
 
@@ -1904,16 +2150,27 @@ def migrate_target_layout(
     migration_record.write_text(
         "\n".join(
             [
-                "# EvoZeus-wrapper 布局迁移：v1 -> v2",
+                (
+                    "# EvoZeus-wrapper 布局迁移：v1 -> v2"
+                    if plan["layout_migration_required"]
+                    else f"# EvoZeus-wrapper Harness Refresh：{plan['current_version']} -> {plan['latest_version']}"
+                ),
                 "",
                 f"- 日期：{(today or date.today()).isoformat()}",
                 f"- Wrapper 版本：{plan['current_version'] or 'unknown'} -> {plan['latest_version'] or 'unknown'}",
                 f"- 新事实源：`{TARGET_WRAPPER_MANIFEST}`",
-                "- 目标：把 wrapper 产物归拢到 `.evozeus-wrapper/`。",
+                (
+                    "- 目标：把 wrapper 产物归拢到 `.evozeus-wrapper/`。"
+                    if plan["layout_migration_required"]
+                    else "- 目标：修复 consolidated-v2 harness 并刷新 wrapper-managed contract。"
+                ),
                 "",
                 "## 移动记录",
                 "",
-                *[f"- `{item['source']}` -> `{item['destination']}`" for item in plan["moves"]],
+                *(
+                    [f"- `{item['source']}` -> `{item['destination']}`" for item in plan["moves"]]
+                    or ["- 无文件移动；刷新 consolidated-v2 managed files。"]
+                ),
                 "",
                 "## 保留的宿主接点",
                 "",
@@ -1942,6 +2199,13 @@ def migrate_target_layout(
     if after["migration_required"] or after["legacy_manifest_detected"]:
         raise ValueError("migration left a legacy wrapper manifest behind")
 
+    structure = run_command(
+        [sys.executable, str(target / TARGET_PREFLIGHT_SCRIPT), "structure", "--target", str(target)]
+    )
+    if structure["returncode"] != 0:
+        detail = (structure["stderr"] or structure["stdout"]).strip()
+        raise ValueError(f"migration post-validation failed: {detail}")
+
     return {
         **plan,
         "writes": True,
@@ -1952,6 +2216,10 @@ def migrate_target_layout(
         "removed_empty_dirs": removed_dirs,
         "removed_generated_caches": removed_caches,
         "manifest_source": after["manifest_source"],
+        "validation": {
+            "structure": "passed",
+            "command": f"python3 {TARGET_PREFLIGHT_SCRIPT} structure --target {target}",
+        },
     }
 
 

@@ -26,3 +26,9 @@
 - 每个子 Skill 必须单独运行 EvoZeus-wrapper lifecycle，生成自己的 manifest、hook 配置和验证材料。
 - 在 Codex 中通过 `/hooks` 审核并信任新建或变更的 hook。
 - 完成条件包括子 Skill structure preflight 和 consumer-project smoke test；只有文件生成成功不算完成。
+
+## Dashboard
+
+- repo-local dashboard 始终保留在 `.evozeus-wrapper/docs/`。
+- workflow validation 不依赖 GitHub Pages。
+- 只有确认仓库和当前 plan 支持 Pages 后，才设置 repository variable `EVOZEUS_PAGES_ENABLED=true`；否则保持 repository-only mode。

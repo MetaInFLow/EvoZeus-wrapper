@@ -16,6 +16,7 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 | Visibility | `{{VISIBILITY}}` |
 | 当前 Skill 版本 | `{{CURRENT_VERSION}}` |
 | Wrapper harness 版本 | `{{WRAPPER_VERSION}}` |
+| Dashboard deployment | `opt_in_github_pages`；未启用时为 repository-only |
 | Wrapper manifest | `.evozeus-wrapper/wrapper.json` |
 | Codex hook registration | `.codex/hooks.json` |
 | Codex hook adapter | `.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py` |
@@ -48,6 +49,8 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 Codex 会从 trusted `.codex/` layer 发现 project-local hook；新建或变更 hook 后，需要通过 `/hooks` 审核并信任。运行时可用 `EVOZEUS_WRAPPER_LATEST_VERSION=vMAJOR.MINOR.PATCH` 强制检查最新 wrapper 版本；用 `EVOZEUS_WRAPPER_HOOK_ENFORCEMENT=strict` 可以在任何可升级版本存在时阻断 wrapper-managed 执行。
 
 安装、调用、初始化和子 Skill hook 接入以 `.evozeus-wrapper/wrapper.json` 的 `onboarding` 字段及 [onboarding 指南](onboarding.html) 为准。子 Skill 不继承父级 hook，必须单独接入 wrapper、通过 `/hooks` 信任审核，并完成 structure preflight 和 consumer-project smoke test。
+
+push 和 workflow dispatch 始终运行 maintainer validation。只有在确认仓库支持 GitHub Pages，并设置 repository variable `EVOZEUS_PAGES_ENABLED=true` 后，workflow 才部署 dashboard；否则以 repository-only mode 成功结束。
 
 Wrapper-managed Skill 的源头发现顺序固定：
 

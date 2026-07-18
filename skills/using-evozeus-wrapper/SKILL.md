@@ -220,7 +220,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade-check \
 
 python3 scripts/evozeus_wrapper.py harness migrate-layout \
   --target /absolute/path/to/target-skill-or-kit \
-  --latest-version v0.9.0 \
+  --latest-version v0.9.1 \
   --dry-run \
   --json
 ```
@@ -248,9 +248,11 @@ gh repo create OWNER/REPO --source . --public --push
 gh release create v0.1.0 --repo OWNER/REPO --target main \
   --title "v0.1.0" \
   --notes "Initial wrapped Skill harness."
+gh api --method POST repos/OWNER/REPO/pages -f build_type=workflow
+gh variable set EVOZEUS_PAGES_ENABLED --body true --repo OWNER/REPO
 ```
 
-For private repos, use `--private`. Do not put sensitive content into `.evozeus-wrapper/docs/`; GitHub Pages can become an external publishing surface depending on plan and settings.
+For private repos, use `--private` and keep `EVOZEUS_PAGES_ENABLED` unset unless the current plan supports private Pages. Push and workflow dispatch still run maintainer validation in repository-only mode. Do not put sensitive content into `.evozeus-wrapper/docs/`; GitHub Pages can become an external publishing surface depending on plan and settings.
 
 ## Stop Conditions
 

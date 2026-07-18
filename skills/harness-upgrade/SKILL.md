@@ -11,8 +11,8 @@ Use this stage to keep target Skill infrastructure aligned with `MetaInFLow/EvoZ
 
 ```bash
 python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/skill --json
-python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/skill --latest-version v0.9.0 --dry-run --json
-python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/skill --latest-version v0.9.0 --json
+python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/skill --latest-version v0.9.1 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/skill --latest-version v0.9.1 --json
 ```
 
 ## Rules
@@ -22,11 +22,14 @@ python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/pat
 - Only update harness-managed files.
 - Do not touch target Skill business rules.
 - Preserve Codex project-local hook registration at `.codex/hooks.json`; keep its adapter under `.evozeus-wrapper/hooks/`.
+- Prevalidate `.codex/hooks.json` as structured JSON, preserve unrelated hooks, and create or refresh exactly one wrapper SessionStart registration.
 - `SKILL.md` must start, after frontmatter, with `EvoZeus-wrapper 状态检查` before the target Skill's main chain.
 - Other `SKILL.md` changes are append-only: add the `EvoZeus-wrapper` section if missing, otherwise append a migration note.
 - Record every wrapper migration under `.evozeus-wrapper/docs/migrations/` with from/to wrapper version, file moves, validation, and rollback.
 - Update `.evozeus-wrapper/wrapper.json` to `layout_version=2` only after all destination conflicts are cleared.
 - Add the onboarding guide and default onboarding contract during legacy layout migration; do not leave migrated manifests structurally incomplete.
+- Refresh the wrapper-owned status prelude and manifest integration, append a migration note, and require structure post-validation before reporting success.
+- Keep workflow validation active independently of optional Pages deployment; Pages requires `EVOZEUS_PAGES_ENABLED=true`.
 - Old `.evozeus_evoinfra/` and `.evozeus/wrapper.json` paths are migration inputs, not runtime fallbacks.
 - Major wrapper upgrades require explicit user confirmation.
 
