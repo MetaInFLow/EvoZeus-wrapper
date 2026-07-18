@@ -9,9 +9,19 @@ from datetime import date
 from pathlib import Path
 
 try:
-    from .evozeus_wrapper_lifecycle import build_wrapper_manifest, write_wrapper_manifest, WRAPPER_MANAGED_FILES
+    from .evozeus_wrapper_lifecycle import (
+        WRAPPER_MANAGED_FILES,
+        build_onboarding_contract,
+        build_wrapper_manifest,
+        write_wrapper_manifest,
+    )
 except ImportError:
-    from evozeus_wrapper_lifecycle import build_wrapper_manifest, write_wrapper_manifest, WRAPPER_MANAGED_FILES
+    from evozeus_wrapper_lifecycle import (
+        WRAPPER_MANAGED_FILES,
+        build_onboarding_contract,
+        build_wrapper_manifest,
+        write_wrapper_manifest,
+    )
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +32,7 @@ EVOLUTION_SECTION_HEADING = "## 自进化方法"
 WRAPPER_SECTION_HEADING = "## EvoZeus-wrapper"
 LOCAL_PROJECTS_DIR = Path.home() / ".evozeus" / ".projects"
 INITIAL_VERSION = "v0.1.0"
-WRAPPER_VERSION = "v0.8.0"
+WRAPPER_VERSION = "v0.9.0"
 TARGET_EVOINFRA_DIR = ".evozeus-wrapper"
 TARGET_WRAPPER_MANIFEST = f"{TARGET_EVOINFRA_DIR}/wrapper.json"
 TARGET_CHANGELOG = f"{TARGET_EVOINFRA_DIR}/CHANGELOG.md"
@@ -221,7 +231,7 @@ def build_status_section(replacements: dict[str, str]) -> str:
 2. Wrapper harness 状态
    - 当前 wrapper 版本：`{replacements["WRAPPER_VERSION"]}`
    - 事实源：`{TARGET_WRAPPER_MANIFEST}`
-   - 检查命令：在 EvoZeus-wrapper repo 运行 `python3 scripts/evozeus_wrapper.py harness upgrade-check --target <this-skill-repo> --latest-version <wrapper-version> --json`
+   - 检查命令：在 EvoZeus-wrapper repo 运行 `python3 scripts/evozeus_wrapper.py harness upgrade-check --target <this-skill-repo> --json`
    - 如果 wrapper 落后：先运行 `harness upgrade --dry-run` 生成迁移方案，再按状态检查前置、其他 wrapper 内容 append-only 的规则迁移。
 3. Source contract 状态
    - 检查命令：`python3 {TARGET_PREFLIGHT_SCRIPT} doctor --repo {replacements["REPO_NAME"]}`
@@ -251,7 +261,7 @@ def build_wrapper_section(replacements: dict[str, str]) -> str:
 - 源头/安装问题：先运行 `python3 {TARGET_PREFLIGHT_SCRIPT} doctor --repo {replacements["REPO_NAME"]}`。
 - 结构问题：运行 `python3 {TARGET_PREFLIGHT_SCRIPT} structure`。
 - Skill release 问题：运行 `python3 {TARGET_PREFLIGHT_SCRIPT} version --repo {replacements["REPO_NAME"]}`。
-- wrapper harness 升级：回到 EvoZeus-wrapper repo，运行 `python3 scripts/evozeus_wrapper.py harness upgrade-check --target <this-skill-repo> --latest-version <wrapper-version> --json`，再用 `harness upgrade --dry-run` 生成迁移方案。
+- wrapper harness 升级：回到 EvoZeus-wrapper repo，运行 `python3 scripts/evozeus_wrapper.py harness upgrade-check --target <this-skill-repo> --json`，再用检查结果中的最新版本运行 `harness upgrade --dry-run` 生成迁移方案。
 
 Append-only 迁移规则：
 
@@ -330,6 +340,19 @@ def main() -> int:
     parser.add_argument("--skill-name", help="Display name for the Skill.")
     parser.add_argument("--repo", required=True, help="Target GitHub repo in OWNER/REPO format.")
     parser.add_argument("--visibility", choices=["public", "private"], help="GitHub repo visibility.")
+    parser.add_argument(
+        "--init-command",
+        help="Target Skill-owned initialization command; requires --init-verification.",
+    )
+    parser.add_argument(
+        "--init-verification",
+        help="Target Skill-owned initialization verification; requires --init-command.",
+    )
+    parser.add_argument(
+        "--generates-child-skills",
+        action="store_true",
+        help="Declare that generated child Skills require separate wrapper and hook onboarding.",
+    )
     parser.add_argument("--force", action="store_true", help="Overwrite existing wrapper files.")
     args = parser.parse_args()
 
@@ -348,6 +371,16 @@ def main() -> int:
 
     visibility = args.visibility or ask_visibility()
     skill_name = args.skill_name or infer_skill_name(target)
+    try:
+        onboarding = build_onboarding_contract(
+            repo=args.repo,
+            skill_name=skill_name,
+            init_command=args.init_command,
+            init_verification=args.init_verification,
+            generates_child_skills=args.generates_child_skills,
+        )
+    except ValueError as exc:
+        fail(str(exc))
     replacements = {
         "DATE": date.today().isoformat(),
         "INITIAL_VERSION": INITIAL_VERSION,
@@ -366,7 +399,13 @@ def main() -> int:
     actions.append(
         write_wrapper_manifest(
             target,
-            build_wrapper_manifest(args.repo, WRAPPER_VERSION, WRAPPER_MANAGED_FILES, []),
+            build_wrapper_manifest(
+                args.repo,
+                WRAPPER_VERSION,
+                WRAPPER_MANAGED_FILES,
+                [],
+                onboarding=onboarding,
+            ),
             args.force,
         )
     )

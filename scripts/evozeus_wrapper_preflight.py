@@ -31,6 +31,7 @@ TARGET_DESIGNS_DIR = f"{TARGET_EVOINFRA_DIR}/docs/designs"
 TARGET_DESIGNS_README = f"{TARGET_DESIGNS_DIR}/README.md"
 TARGET_MIGRATIONS_DIR = f"{TARGET_EVOINFRA_DIR}/docs/migrations"
 TARGET_MIGRATIONS_README = f"{TARGET_MIGRATIONS_DIR}/README.md"
+TARGET_ONBOARDING_GUIDE = f"{TARGET_EVOINFRA_DIR}/docs/onboarding.md"
 TARGET_PREFLIGHT_SCRIPT = f"{TARGET_EVOINFRA_DIR}/scripts/evozeus_wrapper_preflight.py"
 
 REQUIRED_FILES = [
@@ -46,6 +47,7 @@ REQUIRED_FILES = [
     TARGET_DESIGN_TEMPLATE,
     TARGET_DESIGNS_README,
     TARGET_MIGRATIONS_README,
+    TARGET_ONBOARDING_GUIDE,
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/skill-feedback.yml",
     ".github/pull_request_template.md",
@@ -288,6 +290,68 @@ def check_integration_contract(target: Path, manifest: dict | None) -> None:
         return
 
     fail(f"unknown integration.mode: {mode}")
+
+
+def check_onboarding_contract(manifest: dict | None) -> None:
+    def nonempty_string(value: object) -> bool:
+        return isinstance(value, str) and bool(value.strip())
+
+    onboarding = (manifest or {}).get("onboarding")
+    if not isinstance(onboarding, dict):
+        fail("wrapper manifest must contain an onboarding contract")
+
+    installation = onboarding.get("installation")
+    if not isinstance(installation, dict):
+        fail("onboarding.installation must be an object")
+    if installation.get("mode") != "canonical_repo_symlink":
+        fail("onboarding.installation.mode must be canonical_repo_symlink")
+    if not nonempty_string(installation.get("command")) or not nonempty_string(
+        installation.get("verification")
+    ):
+        fail("onboarding.installation must provide command and verification")
+
+    invocation = onboarding.get("invocation")
+    if not isinstance(invocation, dict):
+        fail("onboarding.invocation must be an object")
+    if invocation.get("mode") != "host_skill_discovery" or invocation.get("owner") != "target_skill":
+        fail("onboarding.invocation must use host_skill_discovery owned by target_skill")
+    invocation_verification = invocation.get("verification")
+    if not nonempty_string(invocation.get("instruction")) or not (
+        isinstance(invocation_verification, str)
+        and "consumer-project smoke test" in invocation_verification
+    ):
+        fail("onboarding.invocation must provide instructions and a consumer-project smoke test")
+
+    initialization = onboarding.get("initialization")
+    if not isinstance(initialization, dict):
+        fail("onboarding.initialization must be an object")
+    if initialization.get("owner") != "target_skill":
+        fail("onboarding.initialization.owner must be target_skill")
+    if not isinstance(initialization.get("required"), bool):
+        fail("onboarding.initialization.required must be boolean")
+    if initialization.get("required") and not (
+        nonempty_string(initialization.get("command"))
+        and nonempty_string(initialization.get("verification"))
+    ):
+        fail("required onboarding initialization must provide command and verification")
+
+    children = onboarding.get("generated_child_skills")
+    if not isinstance(children, dict):
+        fail("onboarding.generated_child_skills must be an object")
+    if children.get("hooks_inherited") is not False:
+        fail("generated child Skills must explicitly declare hooks_inherited=false")
+    if not isinstance(children.get("supported"), bool):
+        fail("onboarding.generated_child_skills.supported must be boolean")
+    if children.get("supported"):
+        if children.get("attachment") != "separate_wrapper_lifecycle":
+            fail("generated child Skills must use a separate_wrapper_lifecycle attachment")
+        if children.get("trust_review") != "/hooks":
+            fail("generated child Skill hooks must require /hooks trust review")
+        verification = children.get("verification") or ""
+        required_terms = ["structure preflight", "consumer-project smoke test"]
+        if not all(term in verification for term in required_terms):
+            fail("generated child Skill verification must include structure preflight and consumer-project smoke test")
+    ok("onboarding contract is complete")
 
 
 def skill_name_from_skill_md(path: Path) -> str | None:
@@ -554,6 +618,7 @@ def check_maintainer(args: argparse.Namespace) -> None:
     if missing:
         fail("missing required maintainer wrapper files:\n" + "\n".join(f"- {path}" for path in missing))
     manifest = load_wrapper_manifest(target)
+    check_onboarding_contract(manifest)
     check_integration_contract(target, manifest)
     entry = root_entry_path(target)
     entry_text = read_text(entry)

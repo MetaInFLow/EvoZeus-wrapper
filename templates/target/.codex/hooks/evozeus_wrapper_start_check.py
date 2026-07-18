@@ -5,14 +5,17 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
-DEFAULT_LATEST_VERSION = "{{WRAPPER_VERSION}}"
 MANIFEST_PATH = ".evozeus-wrapper/wrapper.json"
 LATEST_VERSION_ENV = "EVOZEUS_WRAPPER_LATEST_VERSION"
 ENFORCEMENT_ENV = "EVOZEUS_WRAPPER_HOOK_ENFORCEMENT"
+LATEST_RELEASE_URL = "https://api.github.com/repos/MetaInFLow/EvoZeus-wrapper/releases/latest"
 
 
 def repo_root() -> Path:
@@ -34,6 +37,61 @@ def version_key(tag: str) -> tuple[int, int, int] | None:
     if not match:
         return None
     return tuple(int(part) for part in match.groups())
+
+
+def fetch_latest_release() -> dict[str, str | None]:
+    request = Request(
+        LATEST_RELEASE_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "EvoZeus-wrapper-hook",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        return {"version": None, "url": None, "error": str(exc)}
+    version = payload.get("tag_name") if isinstance(payload, dict) else None
+    url = payload.get("html_url") if isinstance(payload, dict) else None
+    if not isinstance(version, str) or not version:
+        return {"version": None, "url": None, "error": "GitHub latest release has no tag_name"}
+    return {"version": version, "url": url if isinstance(url, str) else None, "error": None}
+
+
+def resolve_latest_version(
+    current: str,
+    environment: dict[str, str] | None = None,
+    fetcher=None,
+) -> dict[str, str | None]:
+    environment = os.environ if environment is None else environment
+    checked_at = datetime.now(timezone.utc).isoformat()
+    explicit = environment.get(LATEST_VERSION_ENV)
+    if explicit:
+        return {
+            "version": explicit,
+            "source": "environment",
+            "checked_at": checked_at,
+            "url": None,
+            "error": None,
+        }
+    release = (fetcher or fetch_latest_release)()
+    if release.get("version"):
+        return {
+            "version": release["version"],
+            "source": "github_latest_release",
+            "checked_at": checked_at,
+            "url": release.get("url"),
+            "error": None,
+        }
+    return {
+        "version": None,
+        "source": "unavailable",
+        "checked_at": checked_at,
+        "url": None,
+        "error": release.get("error") or "GitHub latest release is unavailable",
+    }
 
 
 def emit(payload: dict[str, Any]) -> int:
@@ -85,19 +143,30 @@ def main() -> int:
         )
 
     current = str(manifest.get("wrapper_version") or "")
-    latest = os.environ.get(LATEST_VERSION_ENV) or DEFAULT_LATEST_VERSION
-    if not latest or latest.startswith("{{"):
-        latest = current
     enforcement = os.environ.get(ENFORCEMENT_ENV, "advisory").strip().lower()
     if enforcement not in {"advisory", "strict"}:
         enforcement = "advisory"
 
+    latest_resolution = resolve_latest_version(current)
+    latest = latest_resolution["version"]
     current_key = version_key(current)
-    latest_key = version_key(latest)
     if not current_key:
         return block("EvoZeus wrapper harness version is missing or invalid.", "repair_wrapper_manifest")
+    if not latest:
+        detail = (
+            "EvoZeus wrapper latest version is unavailable; "
+            f"source={latest_resolution['source']}; checked_at={latest_resolution['checked_at']}; "
+            f"error={latest_resolution['error']}"
+        )
+        if enforcement == "strict":
+            return block(detail, "retry_latest_release_lookup")
+        return allow("warn", detail, "retry_latest_release_lookup")
+    latest_key = version_key(latest)
     if not latest_key:
-        return block("EvoZeus wrapper latest version is missing or invalid.", f"set_{LATEST_VERSION_ENV}")
+        return block(
+            f"EvoZeus wrapper latest version is invalid: {latest}",
+            f"check_{LATEST_VERSION_ENV}_or_latest_release",
+        )
 
     if latest_key == current_key:
         return allow("allow", "EvoZeus wrapper harness is current.", "none")

@@ -6,6 +6,31 @@ All notable changes to EvoZeus-wrapper are recorded here.
 
 - None yet.
 
+## [v0.9.0] - 2026-07-18
+
+### Added
+
+- Added apply mode to `publish reinstall`, with full prevalidation, canonical `SKILL.md` validation, safe symlink creation/relinking, explicit `--approve-archive`, deterministic EvoZeus archive placement, and rollback on write failures.
+- Added manifest onboarding contracts for installation, invocation, target-owned initialization, and generated child Skills.
+- Added `.evozeus-wrapper/docs/onboarding.md` and preflight enforcement for required initialization evidence, non-inherited child hooks, `/hooks` trust review, separate child wrapper lifecycles, and consumer-project smoke tests.
+
+### Fixed
+
+- Fixed `harness upgrade-check` self-comparison when `--latest-version` is omitted. The command now resolves the authoritative GitHub latest release and reports `latest_unknown` with source, timestamp, and error details when lookup fails.
+- Updated the Codex `SessionStart` hook to refresh the GitHub latest release after installation instead of relying on an install-time version constant.
+- Updated generated guidance so upgrade checks no longer pass the installed wrapper version back as the latest version.
+
+### Changed
+
+- Extended the legacy layout migration to generate the onboarding guide and add a default onboarding contract to migrated manifests.
+- Bumped newly generated wrapper harness manifests to `v0.9.0`.
+
+### Verification
+
+- `python3 -m pytest -q`
+- `python3 -m py_compile scripts/evozeus_wrapper.py scripts/evozeus_wrapper_bootstrap.py scripts/evozeus_wrapper_lifecycle.py scripts/evozeus_wrapper_preflight.py templates/target/.codex/hooks/evozeus_wrapper_start_check.py`
+- Real target dry-run of `harness upgrade-check` without `--latest-version`, confirming authoritative GitHub release discovery.
+
 ## [v0.8.0] - 2026-07-18
 
 ### Added

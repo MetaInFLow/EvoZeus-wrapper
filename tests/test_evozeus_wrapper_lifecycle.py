@@ -1,4 +1,5 @@
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -8,16 +9,25 @@ from datetime import date
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from scripts.evozeus_wrapper_bootstrap import copy_templates, inject_evolution_method
+from scripts.evozeus_wrapper_bootstrap import (
+    build_status_section,
+    build_wrapper_section,
+    copy_templates,
+    inject_evolution_method,
+)
 from scripts.evozeus_wrapper_lifecycle import (
     CODEX_START_HOOK_SCRIPT,
     LEGACY_TARGET_WRAPPER_MANIFEST,
     TARGET_CHANGELOG,
     TARGET_FEEDBACK_POLICY,
     TARGET_MIGRATIONS_README,
+    TARGET_ONBOARDING_GUIDE,
     TARGET_PREFLIGHT_SCRIPT,
     TARGET_WRAPPER_MANIFEST,
+    apply_reinstall,
+    build_onboarding_contract,
     build_wrapper_manifest,
     classify_pr_permission,
     classify_wrapper_upgrade,
@@ -41,6 +51,7 @@ from scripts.evozeus_wrapper_lifecycle import (
     wrapper_manifest_status,
 )
 from scripts.evozeus_wrapper_preflight import (
+    check_onboarding_contract,
     check_integration_contract,
     load_wrapper_manifest as load_preflight_manifest,
     referenced_runtime_files,
@@ -154,6 +165,7 @@ class LifecycleBasicsTest(unittest.TestCase):
             self.assertTrue((target / TARGET_PREFLIGHT_SCRIPT).is_file())
             self.assertTrue((target / CODEX_START_HOOK_SCRIPT).is_file())
             self.assertTrue((target / ".evozeus-wrapper/docs/index.md").is_file())
+            self.assertTrue((target / TARGET_ONBOARDING_GUIDE).is_file())
             self.assertTrue((target / ".codex/hooks.json").is_file())
             self.assertTrue((target / ".github/ISSUE_TEMPLATE/skill-feedback.yml").is_file())
             self.assertFalse((target / "CHANGELOG.md").exists())
@@ -238,6 +250,19 @@ class LifecycleBasicsTest(unittest.TestCase):
             self.assertIn("runtime-only install", text)
             for phrase in blocked_phrases:
                 self.assertNotIn(phrase, text)
+
+    def test_generated_upgrade_guidance_uses_authoritative_latest_lookup(self):
+        replacements = {
+            "CURRENT_VERSION": "v0.1.0",
+            "REPO_NAME": "MetaInFLow/skill",
+            "VISIBILITY": "private",
+            "WRAPPER_VERSION": "v0.8.0",
+        }
+
+        text = build_status_section(replacements) + build_wrapper_section(replacements)
+
+        self.assertIn("harness upgrade-check --target <this-skill-repo> --json", text)
+        self.assertNotIn("--latest-version <wrapper-version>", text)
 
     def test_preflight_root_entry_path_uses_manifest_instruction_surface(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -378,6 +403,10 @@ class LifecycleBasicsTest(unittest.TestCase):
             self.assertEqual(manifest["wrapper_version"], "v0.8.0")
             self.assertEqual(manifest["layout_version"], 2)
             self.assertIn(TARGET_PREFLIGHT_SCRIPT, manifest["managed_files"])
+            self.assertIn(TARGET_ONBOARDING_GUIDE, manifest["managed_files"])
+            self.assertTrue((target / TARGET_ONBOARDING_GUIDE).is_file())
+            self.assertEqual(manifest["onboarding"]["installation"]["mode"], "canonical_repo_symlink")
+            self.assertFalse(manifest["onboarding"]["generated_child_skills"]["hooks_inherited"])
             self.assertIn(TARGET_WRAPPER_MANIFEST, skill_text)
             self.assertIn(".evozeus-wrapper/policies/audit-rule.md", policy)
             self.assertTrue(
@@ -846,6 +875,61 @@ class WrapperManifestTest(unittest.TestCase):
                 CODEX_START_HOOK_SCRIPT,
             )
             self.assertEqual(loaded["layout_version"], 2)
+            self.assertEqual(loaded["onboarding"]["installation"]["mode"], "canonical_repo_symlink")
+            self.assertFalse(loaded["onboarding"]["initialization"]["required"])
+            self.assertFalse(loaded["onboarding"]["generated_child_skills"]["hooks_inherited"])
+
+    def test_onboarding_contract_records_target_initialization_and_child_skill_lifecycle(self):
+        onboarding = build_onboarding_contract(
+            repo="MetaInFLow/factory-skill",
+            skill_name="factory-skill",
+            init_command="python3 scripts/init_company.py --company <name>",
+            init_verification="python3 scripts/verify_company.py --company <name>",
+            generates_child_skills=True,
+        )
+        manifest = build_wrapper_manifest(
+            "MetaInFLow/factory-skill",
+            "v0.9.0",
+            [TARGET_ONBOARDING_GUIDE],
+            [],
+            onboarding=onboarding,
+        )
+
+        self.assertTrue(manifest["onboarding"]["initialization"]["required"])
+        self.assertEqual(manifest["onboarding"]["initialization"]["owner"], "target_skill")
+        self.assertIn("init_company.py", manifest["onboarding"]["initialization"]["command"])
+        invocation = manifest["onboarding"]["invocation"]
+        self.assertEqual(invocation["mode"], "host_skill_discovery")
+        self.assertEqual(invocation["owner"], "target_skill")
+        self.assertIn("factory-skill", invocation["instruction"])
+        self.assertIn("consumer-project smoke test", invocation["verification"])
+        children = manifest["onboarding"]["generated_child_skills"]
+        self.assertTrue(children["supported"])
+        self.assertFalse(children["hooks_inherited"])
+        self.assertEqual(children["attachment"], "separate_wrapper_lifecycle")
+        self.assertEqual(children["trust_review"], "/hooks")
+        self.assertIn("consumer-project smoke test", children["verification"])
+
+    def test_onboarding_contract_rejects_incomplete_required_initialization(self):
+        with self.assertRaisesRegex(ValueError, "command and verification"):
+            build_onboarding_contract(
+                repo="MetaInFLow/factory-skill",
+                skill_name="factory-skill",
+                init_command="python3 scripts/init_company.py",
+            )
+
+    def test_preflight_rejects_invalid_onboarding_contract(self):
+        manifest = build_wrapper_manifest("MetaInFLow/skill", "v0.9.0", [], [])
+        manifest["onboarding"]["initialization"] = {
+            "required": True,
+            "owner": "target_skill",
+            "command": None,
+            "verification": None,
+        }
+        manifest["onboarding"]["generated_child_skills"]["hooks_inherited"] = True
+
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            check_onboarding_contract(manifest)
 
     def test_build_wrapper_manifest_records_codex_hook_registration_for_complete_harness(self):
         manifest = build_wrapper_manifest(
@@ -1061,6 +1145,128 @@ class ReinstallPlanningTest(unittest.TestCase):
 
             self.assertEqual(plan["actions"][0]["action"], "needs_user_confirmation")
 
+    def test_apply_reinstall_creates_missing_runtime_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            canonical = Path(tmp) / "repo"
+            canonical.mkdir()
+            (canonical / "SKILL.md").write_text("canonical", encoding="utf-8")
+
+            report = apply_reinstall("skill", canonical, home, ["codex"])
+            install = home / ".codex" / "skills" / "skill"
+
+            self.assertEqual(report["status"], "applied")
+            self.assertTrue(report["writes"])
+            self.assertTrue(install.is_symlink())
+            self.assertEqual(install.resolve(), canonical.resolve())
+            self.assertEqual(report["actions"][0]["result"], "created_symlink")
+
+    def test_apply_reinstall_relinks_wrong_runtime_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            canonical = Path(tmp) / "repo"
+            old = Path(tmp) / "old"
+            canonical.mkdir()
+            old.mkdir()
+            (canonical / "SKILL.md").write_text("canonical", encoding="utf-8")
+            install = home / ".codex" / "skills" / "skill"
+            install.parent.mkdir(parents=True)
+            install.symlink_to(old)
+
+            report = apply_reinstall("skill", canonical, home, ["codex"])
+
+            self.assertEqual(report["status"], "applied")
+            self.assertEqual(report["actions"][0]["result"], "relinked_symlink")
+            self.assertEqual(install.resolve(), canonical.resolve())
+
+    def test_apply_reinstall_prevalidates_all_actions_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            canonical = Path(tmp) / "repo"
+            canonical.mkdir()
+            (canonical / "SKILL.md").write_text("canonical", encoding="utf-8")
+            agents_install = home / ".agents" / "skills" / "skill"
+            agents_install.mkdir(parents=True)
+            (agents_install / "SKILL.md").write_text("local edits", encoding="utf-8")
+
+            report = apply_reinstall("skill", canonical, home, ["codex", "agents"])
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertFalse(report["writes"])
+            self.assertFalse((home / ".codex" / "skills" / "skill").exists())
+            self.assertTrue(agents_install.is_dir())
+            self.assertFalse((home / ".evozeus" / "archives").exists())
+
+    def test_apply_reinstall_archives_real_directory_after_explicit_approval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            canonical = Path(tmp) / "repo"
+            canonical.mkdir()
+            (canonical / "SKILL.md").write_text("canonical", encoding="utf-8")
+            install = home / ".codex" / "skills" / "skill"
+            install.mkdir(parents=True)
+            (install / "SKILL.md").write_text("canonical", encoding="utf-8")
+
+            report = apply_reinstall(
+                "skill",
+                canonical,
+                home,
+                ["codex"],
+                approve_archive=True,
+                archive_id="20260718T120000000000Z",
+            )
+            archived = Path(report["actions"][0]["archive_path"])
+
+            self.assertEqual(report["status"], "applied")
+            self.assertTrue(install.is_symlink())
+            self.assertEqual(install.resolve(), canonical.resolve())
+            self.assertTrue(archived.is_dir())
+            self.assertEqual((archived / "SKILL.md").read_text(encoding="utf-8"), "canonical")
+            self.assertTrue(
+                archived.is_relative_to(home.resolve() / ".evozeus" / "archives" / "runtime-installs")
+            )
+
+    def test_apply_reinstall_requires_approval_for_different_real_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            canonical = Path(tmp) / "repo"
+            canonical.mkdir()
+            (canonical / "SKILL.md").write_text("canonical", encoding="utf-8")
+            install = home / ".codex" / "skills" / "skill"
+            install.mkdir(parents=True)
+            (install / "SKILL.md").write_text("local edits", encoding="utf-8")
+
+            blocked = apply_reinstall("skill", canonical, home, ["codex"])
+            applied = apply_reinstall(
+                "skill",
+                canonical,
+                home,
+                ["codex"],
+                approve_archive=True,
+                archive_id="20260718T120000000000Z",
+            )
+
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertFalse(blocked["writes"])
+            self.assertEqual(applied["status"], "applied")
+            archived = Path(applied["actions"][0]["archive_path"])
+            self.assertEqual((archived / "SKILL.md").read_text(encoding="utf-8"), "local edits")
+
+    def test_apply_reinstall_requires_canonical_skill_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            missing = root / "missing"
+            without_skill = root / "repo"
+            without_skill.mkdir()
+
+            with self.assertRaisesRegex(ValueError, "canonical path must be an existing directory"):
+                apply_reinstall("skill", missing, home, ["codex"])
+            with self.assertRaisesRegex(ValueError, "canonical path must contain SKILL.md"):
+                apply_reinstall("skill", without_skill, home, ["codex"])
+
+            self.assertFalse(home.exists())
+
 
 class EvolutionAndUpgradePlanningTest(unittest.TestCase):
     def test_classify_pr_permission(self):
@@ -1074,6 +1280,119 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
         self.assertEqual(classify_wrapper_upgrade("v0.1.0", "v0.2.0", managed_dirty=True), "needs_merge_review")
         self.assertEqual(classify_wrapper_upgrade("v0.1.0", "v1.0.0", managed_dirty=False), "requires_confirmation")
         self.assertEqual(classify_wrapper_upgrade("v0.2.0", "v0.1.0", managed_dirty=False), "local_ahead")
+
+    def test_plan_harness_upgrade_reports_latest_unknown_instead_of_self_comparing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.6.0", [], []),
+            )
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.read_latest_release",
+                return_value={"exists": False, "tag": None, "error": "offline"},
+            ):
+                plan = plan_harness_upgrade(target=target)
+
+            self.assertEqual(plan["current_version"], "v0.6.0")
+            self.assertIsNone(plan["latest_version"])
+            self.assertEqual(plan["latest_source"], "unavailable")
+            self.assertEqual(plan["upgrade_status"], "latest_unknown")
+
+    def test_plan_harness_upgrade_resolves_authoritative_github_latest_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.6.0", [], []),
+            )
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.read_latest_release",
+                return_value={"exists": True, "tag": "v0.8.0", "url": "https://example.test/v0.8.0"},
+            ):
+                plan = plan_harness_upgrade(target=target)
+
+            self.assertEqual(plan["latest_version"], "v0.8.0")
+            self.assertEqual(plan["latest_source"], "github_latest_release")
+            self.assertIsNone(plan["latest_lookup_error"])
+            self.assertEqual(plan["upgrade_status"], "auto_pr")
+
+    def test_plan_harness_upgrade_reports_lookup_error_when_github_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.8.0", [], []),
+            )
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.read_latest_release",
+                return_value={"exists": False, "tag": None, "error": "network unavailable"},
+            ):
+                plan = plan_harness_upgrade(target=target)
+
+            self.assertIsNone(plan["latest_version"])
+            self.assertEqual(plan["latest_source"], "unavailable")
+            self.assertEqual(plan["latest_lookup_error"], "network unavailable")
+            self.assertEqual(plan["upgrade_status"], "latest_unknown")
+
+    def test_plan_harness_upgrade_reports_up_to_date_only_from_authoritative_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.8.0", [], []),
+            )
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.read_latest_release",
+                return_value={"exists": True, "tag": "v0.8.0", "url": "https://example.test/v0.8.0"},
+            ):
+                plan = plan_harness_upgrade(target=target)
+
+            self.assertEqual(plan["latest_source"], "github_latest_release")
+            self.assertEqual(plan["upgrade_status"], "up_to_date")
+
+    def test_plan_harness_upgrade_reports_local_ahead_of_authoritative_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            write_wrapper_manifest(
+                target,
+                build_wrapper_manifest("MetaInFLow/skill", "v0.9.0", [], []),
+            )
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.read_latest_release",
+                return_value={"exists": True, "tag": "v0.8.0", "url": "https://example.test/v0.8.0"},
+            ):
+                plan = plan_harness_upgrade(target=target)
+
+            self.assertEqual(plan["latest_source"], "github_latest_release")
+            self.assertEqual(plan["upgrade_status"], "local_ahead")
+
+    def test_plan_harness_upgrade_prioritizes_required_layout_migration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            legacy_manifest = target / LEGACY_TARGET_WRAPPER_MANIFEST
+            legacy_manifest.parent.mkdir(parents=True)
+            legacy_manifest.write_text(
+                '{"canonical_repo":"MetaInFLow/skill","wrapper_version":"v0.7.0"}\n',
+                encoding="utf-8",
+            )
+
+            plan = plan_harness_upgrade(target=target, latest_version="v0.7.0")
+
+            self.assertTrue(plan["migration_required"])
+            self.assertEqual(plan["upgrade_status"], "up_to_date")
+            self.assertEqual(plan["recommended_action"], "migrate_layout")
 
     def test_plan_harness_upgrade_returns_append_only_migration_plan(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1216,6 +1535,7 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
                 text=True,
                 capture_output=True,
                 cwd=target,
+                env={**os.environ, "EVOZEUS_WRAPPER_LATEST_VERSION": "v0.7.0"},
                 check=False,
             )
             advisory_payload = json.loads(advisory.stdout)
@@ -1224,7 +1544,11 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertTrue(advisory_payload["continue"])
             self.assertIn("non-breaking upgrade", advisory_payload["systemMessage"])
 
-            strict_env = {**os.environ, "EVOZEUS_WRAPPER_HOOK_ENFORCEMENT": "strict"}
+            strict_env = {
+                **os.environ,
+                "EVOZEUS_WRAPPER_HOOK_ENFORCEMENT": "strict",
+                "EVOZEUS_WRAPPER_LATEST_VERSION": "v0.7.0",
+            }
             strict = subprocess.run(
                 [sys.executable, str(adapter)],
                 input=json.dumps({"hook_event_name": "SessionStart", "source": "startup"}),
@@ -1239,6 +1563,44 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertEqual(strict.returncode, 0)
             self.assertFalse(strict_payload["continue"])
             self.assertIn("wrapper harness", strict_payload["stopReason"])
+
+    def test_codex_hook_resolves_latest_release_after_install(self):
+        template_path = Path("templates/target/.codex/hooks/evozeus_wrapper_start_check.py").resolve()
+        spec = importlib.util.spec_from_file_location("evozeus_wrapper_hook_template", template_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        result = module.resolve_latest_version(
+            current="v0.7.0",
+            environment={},
+            fetcher=lambda: {
+                "version": "v0.8.0",
+                "url": "https://example.test/v0.8.0",
+                "error": None,
+            },
+        )
+
+        self.assertEqual(result["version"], "v0.8.0")
+        self.assertEqual(result["source"], "github_latest_release")
+        self.assertIsNone(result["error"])
+
+    def test_codex_hook_reports_latest_unknown_when_remote_lookup_fails(self):
+        template_path = Path("templates/target/.codex/hooks/evozeus_wrapper_start_check.py").resolve()
+        spec = importlib.util.spec_from_file_location("evozeus_wrapper_hook_template_offline", template_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        result = module.resolve_latest_version(
+            current="v0.8.0",
+            environment={},
+            fetcher=lambda: {"version": None, "url": None, "error": "offline"},
+        )
+
+        self.assertIsNone(result["version"])
+        self.assertEqual(result["source"], "unavailable")
+        self.assertEqual(result["error"], "offline")
 
 
 if __name__ == "__main__":

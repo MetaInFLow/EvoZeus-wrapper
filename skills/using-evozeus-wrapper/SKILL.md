@@ -51,6 +51,8 @@ Before writing anything, identify:
 - Target GitHub repo: `OWNER/REPO`.
 - Visibility: `public` or `private`.
 - Skill / kit display name.
+- Whether target-owned initialization is required, including its command and verification command.
+- Whether the target generates child Skills that need separate wrapper and hook onboarding.
 - Evidence boundary: public examples only, redacted examples, or private material.
 
 If visibility is missing, ask before creating or pushing anything.
@@ -180,6 +182,14 @@ python3 scripts/evozeus_wrapper.py publish reinstall \
 ```
 
 Runtime installs should become symlinks or pointers to the canonical repo, not copied forks.
+Run the same command without `--dry-run` to apply missing or incorrect symlinks. If the plan finds a real directory, review it and rerun with `--approve-archive`; the original is moved under `~/.evozeus/archives/runtime-installs/`, never deleted.
+
+The generated manifest records onboarding separately from wrapper implementation:
+
+- installation uses a canonical repo symlink;
+- invocation remains owned by the target Skill's canonical `SKILL.md`;
+- required initialization must provide both a target-owned command and verification;
+- child Skills do not inherit parent hooks and require a separate wrapper lifecycle, `/hooks` trust review, structure preflight, and consumer-project smoke test.
 
 ### 7. Evolution Loop
 
@@ -206,12 +216,11 @@ Use `skills/harness-upgrade/SKILL.md`.
 ```bash
 python3 scripts/evozeus_wrapper.py harness upgrade-check \
   --target /absolute/path/to/target-skill-or-kit \
-  --latest-version v0.8.0 \
   --json
 
 python3 scripts/evozeus_wrapper.py harness migrate-layout \
   --target /absolute/path/to/target-skill-or-kit \
-  --latest-version v0.8.0 \
+  --latest-version v0.9.0 \
   --dry-run \
   --json
 ```
@@ -223,6 +232,7 @@ For wrapper `v0.7.0+`, the target harness must include Codex project-local hook 
 - `.codex/hooks.json` registers `SessionStart` for `startup|resume|clear|compact`.
 - `.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py` reads `.evozeus-wrapper/wrapper.json` and emits Codex hook JSON.
 - Non-managed hooks require Codex review/trust through `/hooks` before they run.
+- The hook resolves the authoritative GitHub latest release on each SessionStart. If lookup fails, advisory mode warns and strict mode blocks; it never compares the current version with itself.
 
 ## GitHub Operations
 

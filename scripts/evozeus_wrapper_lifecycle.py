@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import re
 import hashlib
 import json
+import re
+import shlex
+import shutil
 import subprocess
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +45,7 @@ TARGET_DASHBOARD_CONFIG = f"{TARGET_EVOINFRA_DIR}/docs/_config.yml"
 TARGET_DESIGN_TEMPLATE = f"{TARGET_EVOINFRA_DIR}/docs/design-doc-template.md"
 TARGET_DESIGNS_README = f"{TARGET_EVOINFRA_DIR}/docs/designs/README.md"
 TARGET_MIGRATIONS_README = f"{TARGET_EVOINFRA_DIR}/docs/migrations/README.md"
+TARGET_ONBOARDING_GUIDE = f"{TARGET_EVOINFRA_DIR}/docs/onboarding.md"
 TARGET_PREFLIGHT_SCRIPT = f"{TARGET_EVOINFRA_DIR}/scripts/evozeus_wrapper_preflight.py"
 
 REQUIRED_WRAPPER_FILES = [
@@ -58,6 +61,7 @@ REQUIRED_WRAPPER_FILES = [
     TARGET_DESIGN_TEMPLATE,
     TARGET_DESIGNS_README,
     TARGET_MIGRATIONS_README,
+    TARGET_ONBOARDING_GUIDE,
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/skill-feedback.yml",
     ".github/pull_request_template.md",
@@ -77,6 +81,7 @@ WRAPPER_MANAGED_FILES = [
     TARGET_DESIGN_TEMPLATE,
     TARGET_DESIGNS_README,
     TARGET_MIGRATIONS_README,
+    TARGET_ONBOARDING_GUIDE,
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/skill-feedback.yml",
     ".github/pull_request_template.md",
@@ -301,6 +306,35 @@ def read_latest_release(repo: str | None, runner=run_command) -> dict[str, Any] 
         "url": data.get("url"),
         "published_at": data.get("publishedAt"),
         "error": None,
+    }
+
+
+def resolve_latest_wrapper_release(explicit_version: str | None = None) -> dict[str, Any]:
+    checked_at = datetime.now(timezone.utc).isoformat()
+    if explicit_version:
+        return {
+            "version": explicit_version,
+            "source": "explicit",
+            "checked_at": checked_at,
+            "url": None,
+            "error": None,
+        }
+
+    release = read_latest_release(WRAPPER_REPO) or {}
+    if release.get("exists") and release.get("tag"):
+        return {
+            "version": release["tag"],
+            "source": "github_latest_release",
+            "checked_at": checked_at,
+            "url": release.get("url"),
+            "error": None,
+        }
+    return {
+        "version": None,
+        "source": "unavailable",
+        "checked_at": checked_at,
+        "url": None,
+        "error": release.get("error") or "GitHub latest release is unavailable",
     }
 
 
@@ -1219,6 +1253,66 @@ def diagnose_source_contract(
     }
 
 
+def build_onboarding_contract(
+    *,
+    repo: str,
+    skill_name: str,
+    init_command: str | None = None,
+    init_verification: str | None = None,
+    generates_child_skills: bool = False,
+) -> dict[str, Any]:
+    init_command = init_command.strip() if init_command else None
+    init_verification = init_verification.strip() if init_verification else None
+    if bool(init_command) != bool(init_verification):
+        raise ValueError("required initialization must provide both command and verification")
+    quoted_skill_name = shlex.quote(skill_name)
+
+    child_verification = (
+        "Run the child structure preflight, review and trust its hook with /hooks, then pass a "
+        "consumer-project smoke test."
+        if generates_child_skills
+        else "not_applicable"
+    )
+    return {
+        "installation": {
+            "mode": "canonical_repo_symlink",
+            "command": (
+                "python3 scripts/evozeus_wrapper.py publish reinstall "
+                f"--skill-name {quoted_skill_name} --canonical-path <canonical-repo-path> --target codex --json"
+            ),
+            "verification": (
+                f"test -L \"$HOME/.codex/skills\"/{quoted_skill_name} && python3 {TARGET_PREFLIGHT_SCRIPT} "
+                f"doctor --repo {repo}"
+            ),
+        },
+        "invocation": {
+            "mode": "host_skill_discovery",
+            "owner": "target_skill",
+            "instruction": (
+                f"Start a new host session in a consumer project and invoke {skill_name} using the "
+                "trigger contract in its canonical SKILL.md."
+            ),
+            "verification": (
+                f"Confirm the host selects the canonical {skill_name}/SKILL.md and pass a "
+                "consumer-project smoke test."
+            ),
+        },
+        "initialization": {
+            "required": bool(init_command),
+            "owner": "target_skill",
+            "command": init_command,
+            "verification": init_verification,
+        },
+        "generated_child_skills": {
+            "supported": generates_child_skills,
+            "hooks_inherited": False,
+            "attachment": "separate_wrapper_lifecycle" if generates_child_skills else "not_applicable",
+            "trust_review": "/hooks" if generates_child_skills else "not_applicable",
+            "verification": child_verification,
+        },
+    }
+
+
 def build_wrapper_manifest(
     repo: str,
     wrapper_version: str,
@@ -1226,6 +1320,7 @@ def build_wrapper_manifest(
     install_links: list[str],
     instruction_surface: str | None = None,
     integration: dict[str, Any] | None = None,
+    onboarding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     default_hook_files = []
     if CODEX_HOOKS_CONFIG in managed_files and CODEX_START_HOOK_SCRIPT in managed_files:
@@ -1241,6 +1336,11 @@ def build_wrapper_manifest(
         "canonical_repo": repo,
         "managed_files": managed_files,
         "install_links": install_links,
+        "onboarding": (
+            onboarding
+            if onboarding is not None
+            else build_onboarding_contract(repo=repo, skill_name=repo.split("/")[-1])
+        ),
         "hook_registration": {
             "codex": {
                 "config_file": CODEX_HOOKS_CONFIG,
@@ -1651,6 +1751,7 @@ def plan_target_layout_migration(
         "managed_file_refreshes": [
             TARGET_PREFLIGHT_SCRIPT,
             CODEX_START_HOOK_SCRIPT,
+            TARGET_ONBOARDING_GUIDE,
             ".github/workflows/evozeus-wrapper-preflight.yml",
         ],
         "preserved_host_entrypoints": [
@@ -1720,6 +1821,10 @@ def _refresh_migrated_managed_files(target: Path, wrapper_version: str | None) -
             wrapper_root / "templates" / "target" / ".github" / "workflows" / "evozeus-wrapper-preflight.yml",
             target / ".github" / "workflows" / "evozeus-wrapper-preflight.yml",
         ),
+        (
+            wrapper_root / "templates" / "target" / "docs" / "onboarding.md",
+            target / TARGET_ONBOARDING_GUIDE,
+        ),
     ]
     refreshed: list[str] = []
     for source, destination in refresh_map:
@@ -1783,6 +1888,14 @@ def migrate_target_layout(
     manifest["migrated_from_layout"] = "scattered-v1"
     manifest["legacy_layout_dirs"] = [LEGACY_TARGET_EVOINFRA_DIR, OLDEST_TARGET_EVOINFRA_DIR]
     manifest["managed_files"] = WRAPPER_MANAGED_FILES
+    canonical_repo = manifest.get("canonical_repo") or "OWNER/REPO"
+    manifest.setdefault(
+        "onboarding",
+        build_onboarding_contract(
+            repo=canonical_repo,
+            skill_name=skill_name_from_skill_md(target / "SKILL.md") or canonical_repo.split("/")[-1],
+        ),
+    )
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     changed_files.append(TARGET_WRAPPER_MANIFEST)
 
@@ -1915,16 +2028,155 @@ def plan_reinstall(skill_name: str, canonical_path: Path, home: Path, targets: l
     }
     selected = ["codex", "agents"] if "all" in targets else targets
     actions = []
+    seen_paths: set[str] = set()
     for target_name in selected:
         root = runtime_roots[target_name] if target_name in runtime_roots else Path(target_name).expanduser()
         install_path = root / skill_name if target_name in runtime_roots else root
+        path_key = str(install_path.absolute())
+        if path_key in seen_paths:
+            continue
+        seen_paths.add(path_key)
         actions.append(classify_install_action(install_path, canonical_path))
     return {
         "stage": "publish_reinstall",
         "skill_name": skill_name,
         "canonical_path": str(canonical_path),
+        "status": "planned",
+        "writes": False,
         "actions": actions,
     }
+
+
+def apply_reinstall(
+    skill_name: str,
+    canonical_path: Path,
+    home: Path,
+    targets: list[str],
+    *,
+    approve_archive: bool = False,
+    archive_root: Path | None = None,
+    archive_id: str | None = None,
+) -> dict[str, Any]:
+    if not skill_name or Path(skill_name).name != skill_name or skill_name in {".", ".."}:
+        raise ValueError("skill name must be a single path component")
+
+    canonical_path = canonical_path.expanduser()
+    if not canonical_path.is_dir():
+        raise ValueError("canonical path must be an existing directory")
+    if not (canonical_path / "SKILL.md").is_file():
+        raise ValueError("canonical path must contain SKILL.md")
+    canonical_path = canonical_path.resolve()
+    home = home.expanduser().resolve()
+    archive_base = (
+        archive_root.expanduser().resolve()
+        if archive_root is not None
+        else home / GLOBAL_EVOZEUS_HOME / "archives" / "runtime-installs"
+    )
+    archive_id = archive_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", archive_id):
+        raise ValueError("archive id may contain only letters, digits, dot, underscore, and hyphen")
+
+    report = plan_reinstall(skill_name, canonical_path, home, targets)
+    report.update(
+        {
+            "archive_root": str(archive_base),
+            "archive_approved": approve_archive,
+            "approval_required": False,
+        }
+    )
+    blocked_reasons: list[str] = []
+
+    for action in report["actions"]:
+        install_path = Path(action["path"]).absolute()
+        action_name = action["action"]
+        if action["kind"] == "directory" and install_path.resolve() == canonical_path:
+            blocked_reasons.append(f"canonical repo cannot also be a runtime install directory: {install_path}")
+            action["result"] = "blocked"
+            continue
+        if action_name == "needs_user_confirmation" and action["kind"] != "directory":
+            blocked_reasons.append(f"unsupported runtime install type requires manual handling: {install_path}")
+            action["result"] = "blocked"
+            continue
+        if action_name in {"archive_then_symlink", "needs_user_confirmation"}:
+            report["approval_required"] = True
+            if not approve_archive:
+                blocked_reasons.append(f"archive approval required before replacing real directory: {install_path}")
+                action["result"] = "blocked"
+                continue
+            path_digest = hashlib.sha256(str(install_path).encode("utf-8")).hexdigest()[:12]
+            source_label = install_path.parent.parent.name.lstrip(".") or "runtime"
+            archive_path = archive_base / skill_name / archive_id / f"{source_label}-{path_digest}"
+            if archive_path.exists() or archive_path.is_symlink():
+                blocked_reasons.append(f"archive destination already exists: {archive_path}")
+                action["result"] = "blocked"
+                continue
+            if archive_path.is_relative_to(install_path) or archive_path.is_relative_to(canonical_path):
+                blocked_reasons.append(f"archive destination must be outside source and canonical directories: {archive_path}")
+                action["result"] = "blocked"
+                continue
+            action["archive_path"] = str(archive_path)
+        action.setdefault("result", "pending")
+
+    if blocked_reasons:
+        for action in report["actions"]:
+            if action["result"] == "pending":
+                action["result"] = "not_applied"
+        report.update({"status": "blocked", "writes": False, "errors": blocked_reasons})
+        return report
+
+    undo_log: list[dict[str, Any]] = []
+    try:
+        for action in report["actions"]:
+            install_path = Path(action["path"])
+            action_name = action["action"]
+            if action_name == "already_linked":
+                action["result"] = "already_linked"
+                continue
+            install_path.parent.mkdir(parents=True, exist_ok=True)
+            if action_name == "create_symlink":
+                install_path.symlink_to(canonical_path)
+                undo_log.append({"operation": "remove_created", "path": install_path})
+                action["result"] = "created_symlink"
+                continue
+            if action_name == "relink_symlink":
+                old_target = install_path.readlink()
+                install_path.unlink()
+                try:
+                    install_path.symlink_to(canonical_path)
+                except Exception:
+                    install_path.symlink_to(old_target)
+                    raise
+                undo_log.append({"operation": "restore_symlink", "path": install_path, "target": old_target})
+                action["result"] = "relinked_symlink"
+                continue
+            if action_name in {"archive_then_symlink", "needs_user_confirmation"}:
+                archive_path = Path(action["archive_path"])
+                archive_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(install_path), str(archive_path))
+                try:
+                    install_path.symlink_to(canonical_path)
+                except Exception:
+                    shutil.move(str(archive_path), str(install_path))
+                    raise
+                undo_log.append(
+                    {"operation": "restore_archive", "path": install_path, "archive_path": archive_path}
+                )
+                action["result"] = "archived_and_linked"
+                continue
+            raise RuntimeError(f"unsupported reinstall action: {action_name}")
+    except Exception:
+        for undo in reversed(undo_log):
+            path = undo["path"]
+            if path.is_symlink():
+                path.unlink()
+            if undo["operation"] == "restore_symlink":
+                path.symlink_to(undo["target"])
+            elif undo["operation"] == "restore_archive":
+                shutil.move(str(undo["archive_path"]), str(path))
+        raise
+
+    report.update({"status": "applied", "writes": any(item["result"] != "already_linked" for item in report["actions"]), "errors": []})
+    return report
 
 
 def version_key(tag: str) -> tuple[int, int, int]:
@@ -1984,7 +2236,8 @@ def plan_harness_upgrade(
         root_status_section = f"{instruction_surface} EvoZeus-wrapper status check section (instruction surface prelude)"
         root_wrapper_section = f"{instruction_surface} EvoZeus-wrapper section or migration note (append only)"
     current = manifest.get("wrapper_version") if manifest else None
-    latest = latest_version or current
+    latest_resolution = resolve_latest_wrapper_release(latest_version)
+    latest = latest_resolution["version"]
 
     if not current:
         status = "missing_manifest"
@@ -2016,7 +2269,11 @@ def plan_harness_upgrade(
         if path not in deduped_planned_files:
             deduped_planned_files.append(path)
 
-    if status == "up_to_date":
+    layout_migration = plan_target_layout_migration(target, latest, today)
+
+    if layout_migration["migration_required"]:
+        recommended_action = "migrate_layout"
+    elif status == "up_to_date":
         recommended_action = "none"
     elif status == "local_ahead":
         recommended_action = "do_not_downgrade"
@@ -2033,7 +2290,6 @@ def plan_harness_upgrade(
 
     canonical_repo = manifest.get("canonical_repo") if manifest else None
     integration = architecture["integration"]
-    layout_migration = plan_target_layout_migration(target, latest, today)
     validation = [
         f"python3 {TARGET_PREFLIGHT_SCRIPT} structure",
     ]
@@ -2058,6 +2314,10 @@ def plan_harness_upgrade(
         "manifest_source": manifest_status["manifest_source"],
         "current_version": current,
         "latest_version": latest,
+        "latest_source": latest_resolution["source"],
+        "latest_release_url": latest_resolution["url"],
+        "latest_lookup_error": latest_resolution["error"],
+        "checked_at": latest_resolution["checked_at"],
         "managed_dirty": managed_dirty,
         "upgrade_status": status,
         "recommended_action": recommended_action,

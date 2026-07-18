@@ -20,6 +20,7 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 | Codex hook registration | `.codex/hooks.json` |
 | Codex hook adapter | `.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py` |
 | Wrapper migrations | [`.evozeus-wrapper/docs/migrations/`](migrations/) |
+| 安装与接入 | [`.evozeus-wrapper/docs/onboarding.md`](onboarding.html) |
 | Changelog | [`.evozeus-wrapper/CHANGELOG.md`]({{REPO_URL}}/blob/main/.evozeus-wrapper/CHANGELOG.md) |
 | Design docs | [`.evozeus-wrapper/docs/designs/`](designs/) |
 
@@ -46,6 +47,8 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 
 Codex 会从 trusted `.codex/` layer 发现 project-local hook；新建或变更 hook 后，需要通过 `/hooks` 审核并信任。运行时可用 `EVOZEUS_WRAPPER_LATEST_VERSION=vMAJOR.MINOR.PATCH` 强制检查最新 wrapper 版本；用 `EVOZEUS_WRAPPER_HOOK_ENFORCEMENT=strict` 可以在任何可升级版本存在时阻断 wrapper-managed 执行。
 
+安装、调用、初始化和子 Skill hook 接入以 `.evozeus-wrapper/wrapper.json` 的 `onboarding` 字段及 [onboarding 指南](onboarding.html) 为准。子 Skill 不继承父级 hook，必须单独接入 wrapper、通过 `/hooks` 信任审核，并完成 structure preflight 和 consumer-project smoke test。
+
 Wrapper-managed Skill 的源头发现顺序固定：
 
 1. 读取 `.evozeus-wrapper/wrapper.json`。
@@ -66,7 +69,7 @@ python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py version --repo {{R
 EvoZeus-wrapper harness 升级时，不能重写目标 Skill 业务段落。先在 EvoZeus-wrapper repo 里生成迁移方案：
 
 ```bash
-python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/this-skill --latest-version <wrapper-version> --json
+python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/this-skill --json
 python3 scripts/evozeus_wrapper.py harness upgrade --target /absolute/path/to/this-skill --latest-version <wrapper-version> --dry-run --json
 ```
 

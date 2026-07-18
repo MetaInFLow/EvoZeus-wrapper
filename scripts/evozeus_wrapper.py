@@ -8,6 +8,7 @@ from pathlib import Path
 
 from evozeus_wrapper_lifecycle import (
     REQUIRED_WRAPPER_FILES,
+    apply_reinstall,
     detect_target_architecture,
     diagnose_environment,
     diagnose_skill,
@@ -66,6 +67,15 @@ def main() -> int:
     reinstall.add_argument("--canonical-path", required=True)
     reinstall.add_argument("--target", action="append", required=True, help="codex, agents, all, or an explicit install path.")
     reinstall.add_argument("--dry-run", action="store_true", help="Only print planned reinstall actions.")
+    reinstall.add_argument(
+        "--approve-archive",
+        action="store_true",
+        help="Archive real directory installs before replacing them with canonical symlinks.",
+    )
+    reinstall.add_argument(
+        "--archive-root",
+        help="Override the default ~/.evozeus/archives/runtime-installs archive root.",
+    )
     reinstall.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
 
     loop = sub.add_parser("loop", help="Continuous evolution loop commands.")
@@ -88,7 +98,7 @@ def main() -> int:
     harness_sub = harness.add_subparsers(dest="command", required=True)
     upgrade_check = harness_sub.add_parser("upgrade-check", help="Check target wrapper harness version.")
     upgrade_check.add_argument("--target", required=True)
-    upgrade_check.add_argument("--latest-version", help="Latest wrapper version, such as v0.8.0.")
+    upgrade_check.add_argument("--latest-version", help="Explicit latest wrapper version override, such as v0.9.0.")
     upgrade_check.add_argument("--managed-dirty", action="store_true")
     upgrade_check.add_argument("--json", action="store_true")
     upgrade = harness_sub.add_parser("upgrade", help="Plan wrapper harness upgrade.")
@@ -181,12 +191,27 @@ def main() -> int:
         print_report(report, args.json, "transform")
         return 0
     if args.group == "publish" and args.command == "reinstall":
-        if not args.dry_run:
-            print("write operations are not implemented until archive confirmation is added", file=sys.stderr)
-            return 1
-        report = plan_reinstall(args.skill_name, Path(args.canonical_path), Path.home(), args.target)
+        if args.dry_run:
+            report = plan_reinstall(args.skill_name, Path(args.canonical_path), Path.home(), args.target)
+        else:
+            try:
+                report = apply_reinstall(
+                    args.skill_name,
+                    Path(args.canonical_path),
+                    Path.home(),
+                    args.target,
+                    approve_archive=args.approve_archive,
+                    archive_root=Path(args.archive_root) if args.archive_root else None,
+                )
+            except (OSError, ValueError) as exc:
+                report = {
+                    "stage": "publish_reinstall",
+                    "status": "error",
+                    "writes": False,
+                    "errors": [str(exc)],
+                }
         print_report(report, args.json, "publish")
-        return 0
+        return 0 if report.get("status") in {"planned", "applied"} else 1
     if args.group == "loop" and args.command == "lesson":
         if not args.dry_run:
             print("lesson submission requires explicit confirmation and is not implemented in this command yet", file=sys.stderr)
