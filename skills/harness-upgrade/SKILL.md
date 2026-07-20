@@ -35,7 +35,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade-all --latest-version v0.10.0 
 - Old `.evozeus_evoinfra/` and `.evozeus/wrapper.json` paths are migration inputs, not runtime fallbacks.
 - Major wrapper upgrades require explicit user confirmation.
 - `upgrade-all` must prevalidate every registered target before the first write and restore every target snapshot if any apply step fails.
-- The requested latest version must match the dispatcher cache, environment override, or GitHub latest release. Every target must have a verifiable clean Git worktree and a writable migration write set.
+- Resolve authority before deciding targets are current. The requested latest version must match the dispatcher cache, environment override, or GitHub latest release. Every target must have a verifiable clean Git worktree, writable write-set files and parents, and no symlink in any write path.
 - Snapshot every file the migration may rewrite, move, refresh, or delete. Legacy wrapper path references in target-owned files are part of this explicit write set even though business semantics remain unchanged.
 - A target harness manifest declares global capability ownership and scope, but live user-level dispatcher installation/trust comes from `hook global status` or the diagnosis overlay.
 - The global dispatcher is a native `SessionStart` aggregate gate, not a native per-Skill invocation hook.

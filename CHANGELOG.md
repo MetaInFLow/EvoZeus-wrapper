@@ -30,7 +30,7 @@ All notable changes to EvoZeus-wrapper are recorded here.
 
 ### Verification
 
-- `python3 -m pytest -q` (112 passed)
+- `python3 -m pytest -q` (116 passed)
 - `python3 -m py_compile scripts/evozeus_wrapper.py scripts/evozeus_wrapper_bootstrap.py scripts/evozeus_wrapper_global_hook.py scripts/evozeus_wrapper_lifecycle.py scripts/evozeus_wrapper_preflight.py templates/global/evozeus_wrapper_dispatcher.py templates/target/.codex/hooks/evozeus_wrapper_start_check.py`
 - Temporary user-home install/trust/status/uninstall smoke test and consumer-workspace dispatcher test.
 

@@ -518,7 +518,7 @@ def _resolve_authoritative_upgrade_latest(
 
 def _target_write_errors(target: Path, migration: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    if not os.access(target, os.W_OK):
+    if not os.access(target, os.W_OK | os.X_OK):
         return ["target repository is not writable"]
     candidates = {
         migration.get("instruction_surface", "SKILL.md"),
@@ -528,11 +528,43 @@ def _target_write_errors(target: Path, migration: dict[str, Any]) -> list[str]:
         *migration.get("managed_file_refreshes", []),
         *migration.get("text_rewrite_candidates", []),
         *migration.get("generated_cache_candidates", []),
+        *(
+            item.get(key)
+            for item in migration.get("moves", [])
+            for key in ("source", "destination")
+            if isinstance(item, dict)
+        ),
     }
     for relative in sorted(item for item in candidates if isinstance(item, str) and item):
+        relative_path = Path(relative)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            errors.append(f"migration path escapes target repository: {relative}")
+            continue
         path = target / relative
+        cursor = path
+        symlink_component = None
+        while cursor != target:
+            if cursor.is_symlink():
+                symlink_component = cursor
+                break
+            cursor = cursor.parent
+        if symlink_component is not None:
+            errors.append(
+                "migration path contains a symlink: "
+                + str(symlink_component.relative_to(target))
+            )
+            continue
         if path.exists() and not os.access(path, os.W_OK):
             errors.append(f"migration path is not writable: {relative}")
+            continue
+        parent = path if path.is_dir() else path.parent
+        while not parent.exists() and parent != target:
+            parent = parent.parent
+        if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
+            errors.append(
+                "migration path parent is not writable: "
+                + str(parent.relative_to(target) if parent != target else Path("."))
+            )
     return errors
 
 
@@ -584,11 +616,6 @@ def plan_upgrade_all(
         }
 
     registered, discovery_errors = _registered_upgrade_targets(home)
-    outdated = [
-        target
-        for target in registered
-        if _version_key(target["wrapper_version"]) < latest_key
-    ]
     if discovery_errors:
         return {
             "stage": "harness_upgrade_all",
@@ -597,16 +624,6 @@ def plan_upgrade_all(
             "errors": discovery_errors,
             "targets": [],
         }
-    if not outdated:
-        return {
-            "stage": "harness_upgrade_all",
-            "status": "up_to_date",
-            "writes": False,
-            "errors": [],
-            "latest_version": latest_version,
-            "targets": [],
-        }
-
     latest_resolution = _resolve_authoritative_upgrade_latest(home, latest_resolver)
     authoritative_latest = latest_resolution.get("version")
     if authoritative_latest != latest_version:
@@ -618,6 +635,21 @@ def plan_upgrade_all(
                 "requested latest version does not match the authoritative wrapper release; "
                 f"requested={latest_version}; authoritative={authoritative_latest or 'unknown'}"
             ],
+            "latest_version": latest_version,
+            "latest_source": latest_resolution.get("source", "unavailable"),
+            "targets": [],
+        }
+    outdated = [
+        target
+        for target in registered
+        if _version_key(target["wrapper_version"]) < latest_key
+    ]
+    if not outdated:
+        return {
+            "stage": "harness_upgrade_all",
+            "status": "up_to_date",
+            "writes": False,
+            "errors": [],
             "latest_version": latest_version,
             "latest_source": latest_resolution.get("source", "unavailable"),
             "targets": [],

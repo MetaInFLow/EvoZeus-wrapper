@@ -1018,6 +1018,20 @@ def detect_target_architecture(target: Path) -> dict[str, Any]:
         architecture_style = "unknown"
 
     root_entry = "SKILL.md" if has_root_skill else "AGENTS.md" if has_agents else None
+    selected_instruction_surface = root_entry
+    current_manifest = target / TARGET_WRAPPER_MANIFEST
+    if current_manifest.is_file():
+        try:
+            manifest_data = json.loads(current_manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest_data = {}
+        manifest_surface = (
+            manifest_data.get("instruction_surface")
+            if isinstance(manifest_data, dict)
+            else None
+        )
+        if isinstance(manifest_surface, str) and (target / manifest_surface).is_file():
+            selected_instruction_surface = manifest_surface
     integration = classify_integration_mode(
         target_kind=target_kind,
         root_entry=root_entry,
@@ -1025,9 +1039,11 @@ def detect_target_architecture(target: Path) -> dict[str, Any]:
         plugin_manifests=plugins,
         skill_entries=entries,
         skill_entry_preflight_installed=(
-            bool(root_entry) and surface_has_status_check(target / root_entry)
+            bool(selected_instruction_surface)
+            and surface_has_status_check(target / selected_instruction_surface)
         ),
     )
+    integration["instruction_surface"] = selected_instruction_surface
     verification_candidates = [
         str(path.relative_to(target))
         for path in sorted((target / "automation").glob("*.py"))

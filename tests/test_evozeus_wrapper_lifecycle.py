@@ -822,6 +822,31 @@ class LifecycleBasicsTest(unittest.TestCase):
             self.assertTrue(after["installed"])
             self.assertTrue(after["covers_skill_invocation"])
 
+    def test_detected_skill_entry_uses_manifest_selected_non_root_surface(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "bundle"
+            control = target / "skills/control/SKILL.md"
+            control.parent.mkdir(parents=True)
+            (target / "AGENTS.md").write_text("# Runtime\n", encoding="utf-8")
+            control.write_text(
+                "---\nname: control\n---\n\n"
+                "## EvoZeus-wrapper 状态检查\n\n检查。\n\n# Control\n",
+                encoding="utf-8",
+            )
+            manifest = target / ".evozeus-wrapper/wrapper.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(
+                json.dumps({"instruction_surface": "skills/control/SKILL.md"}),
+                encoding="utf-8",
+            )
+
+            integration = detect_target_architecture(target)["integration"]
+
+            self.assertEqual(integration["instruction_surface"], "skills/control/SKILL.md")
+            self.assertTrue(
+                integration["capabilities"]["skill_entry_preflight"]["installed"]
+            )
+
     def test_preflight_rejects_native_invocation_claim_backed_only_by_project_hook(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "wrapped-skill"
@@ -2488,7 +2513,11 @@ class UpgradeAllHarnessTest(unittest.TestCase):
                 ],
                 text=True,
                 capture_output=True,
-                env={**os.environ, "HOME": str(home)},
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "EVOZEUS_WRAPPER_LATEST_VERSION": "v0.10.0",
+                },
                 check=False,
             )
 
@@ -2569,6 +2598,67 @@ class UpgradeAllHarnessTest(unittest.TestCase):
             self.assertEqual(report["status"], "blocked")
             self.assertTrue(any("authoritative" in error for error in report["errors"]))
 
+    def test_upgrade_all_checks_authority_before_up_to_date_decision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root, version="v0.9.1")
+            self.create_upgrade_target(home, "appears-current", version="v0.9.1")
+            calls = []
+
+            def resolve_latest():
+                calls.append("resolved")
+                return {"version": "v0.10.0", "source": "test", "error": None}
+
+            report = plan_upgrade_all(
+                home,
+                wrapper_root,
+                "v0.9.1",
+                latest_resolver=resolve_latest,
+            )
+
+            self.assertEqual(calls, ["resolved"])
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("authoritative" in error for error in report["errors"]))
+
+    def test_upgrade_all_rejects_symlinked_write_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            target = self.create_upgrade_target(home, "symlink-write")
+            external = root / "external-readme.md"
+            external.write_text("outside\n", encoding="utf-8")
+            (target / "README.md").symlink_to(external)
+            subprocess.run(["git", "init", "-q", str(target)], check=True)
+            subprocess.run(["git", "-C", str(target), "add", "."], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(target),
+                    "-c",
+                    "user.name=EvoZeus Test",
+                    "-c",
+                    "user.email=evozeus@example.invalid",
+                    "commit",
+                    "-qm",
+                    "symlink fixture",
+                ],
+                check=True,
+            )
+
+            report = plan_upgrade_all(
+                home,
+                wrapper_root,
+                "v0.10.0",
+                latest_resolver=self.latest_v010,
+            )
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("symlink" in error for error in report["errors"]))
+            self.assertEqual(external.read_text(encoding="utf-8"), "outside\n")
+
     def test_upgrade_all_rejects_unwritable_target_before_apply(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2591,6 +2681,31 @@ class UpgradeAllHarnessTest(unittest.TestCase):
 
             self.assertEqual(report["status"], "blocked")
             self.assertTrue(any("not writable" in error for error in report["errors"]))
+
+    def test_upgrade_all_rejects_unwritable_destination_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            target = self.create_upgrade_target(home, "unwritable-parent", initialize_git=True)
+            github = target / ".github"
+            github.mkdir()
+
+            real_access = os.access
+
+            def access(path, mode):
+                return False if Path(path) == github else real_access(path, mode)
+
+            with patch("scripts.evozeus_wrapper_global_hook.os.access", side_effect=access):
+                report = plan_upgrade_all(
+                    home,
+                    wrapper_root,
+                    "v0.10.0",
+                    latest_resolver=self.latest_v010,
+                )
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("parent is not writable" in error for error in report["errors"]))
 
 
 class EvolutionAndUpgradePlanningTest(unittest.TestCase):
