@@ -51,6 +51,16 @@ from scripts.evozeus_wrapper_lifecycle import (
     write_wrapper_manifest,
     wrapper_manifest_status,
 )
+from scripts.evozeus_wrapper_global_hook import (
+    GLOBAL_DISPATCHER_COMMAND,
+    apply_global_hook_install,
+    apply_global_hook_uninstall,
+    plan_global_hook_install,
+    apply_upgrade_all,
+    plan_upgrade_all,
+    read_global_hook_status,
+    record_global_hook_trust,
+)
 from scripts.evozeus_wrapper_preflight import (
     check_onboarding_contract,
     check_integration_contract,
@@ -221,7 +231,7 @@ class LifecycleBasicsTest(unittest.TestCase):
         session_start = hooks["hooks"]["SessionStart"][0]
         handler = session_start["hooks"][0]
 
-        self.assertEqual(session_start["matcher"], "startup|resume|clear|compact")
+        self.assertEqual(session_start["matcher"], "startup|resume")
         self.assertEqual(handler["type"], "command")
         self.assertIn(
             "$(git rev-parse --show-toplevel)/.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py",
@@ -362,6 +372,10 @@ class LifecycleBasicsTest(unittest.TestCase):
 
         self.assertIn("harness upgrade-check --target <this-skill-repo> --json", text)
         self.assertNotIn("--latest-version <wrapper-version>", text)
+        self.assertIn("Skill 入口 preflight", text)
+        self.assertIn("repo_maintenance_hook", text)
+        self.assertIn("global_session_dispatcher", text)
+        self.assertIn("SkillInvoke", text)
 
     def test_preflight_root_entry_path_uses_manifest_instruction_surface(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -513,7 +527,7 @@ class LifecycleBasicsTest(unittest.TestCase):
             )
             self.assertFalse(wrapper_manifest_status(target)["migration_required"])
 
-    def test_migrate_layout_produces_complete_native_hook_harness(self):
+    def test_migrate_layout_produces_complete_scoped_hook_harness(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "legacy-skill"
             target.mkdir()
@@ -537,8 +551,11 @@ class LifecycleBasicsTest(unittest.TestCase):
             self.assertIn("v0.9.1", skill_text.split("## Business Logic", 1)[0])
             self.assertNotIn("--latest-version <wrapper-version>", skill_text)
             self.assertIn("v0.6.0 -> v0.9.1", skill_text)
-            self.assertEqual(manifest["integration"]["mode"], "native_host_hook")
-            self.assertTrue(manifest["integration"]["native_host_hook_installed"])
+            self.assertEqual(manifest["integration"]["mode"], "prompt_runtime_check")
+            self.assertFalse(manifest["integration"]["native_skill_invocation_hook_installed"])
+            self.assertTrue(
+                manifest["integration"]["capabilities"]["repo_maintenance_hook"]["installed"]
+            )
             self.assertEqual(manifest["hook_registration"]["codex"]["event"], "SessionStart")
             self.assertIn("SessionStart", hooks["hooks"])
             self.assertIn(
@@ -646,7 +663,10 @@ class LifecycleBasicsTest(unittest.TestCase):
             self.assertTrue(report["writes"])
             self.assertTrue((target / ".codex/hooks.json").is_file())
             self.assertEqual(repaired["wrapper_version"], "v0.9.1")
-            self.assertEqual(repaired["integration"]["mode"], "native_host_hook")
+            self.assertEqual(repaired["integration"]["mode"], "prompt_runtime_check")
+            self.assertTrue(
+                repaired["integration"]["capabilities"]["repo_maintenance_hook"]["installed"]
+            )
             self.assertEqual(repaired["dashboard"]["deployment_mode"], "opt_in_github_pages")
             self.assertTrue(
                 (target / ".evozeus-wrapper/docs/migrations/2026-07-18-v0.9.0-to-v0.9.1.md").is_file()
@@ -733,7 +753,7 @@ class LifecycleBasicsTest(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 check_integration_contract(target, manifest)
 
-    def test_preflight_accepts_native_hook_mode_with_hook_evidence(self):
+    def test_preflight_rejects_plugin_lifecycle_hook_as_native_skill_invocation(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "wrapped-skill"
             target.mkdir()
@@ -743,10 +763,10 @@ class LifecycleBasicsTest(unittest.TestCase):
             (target / "hooks" / "hooks.json").write_text("{}", encoding="utf-8")
             manifest = {"integration": {"mode": "native_host_hook"}}
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 check_integration_contract(target, manifest)
 
-    def test_preflight_accepts_native_codex_project_hook_without_plugin_manifest(self):
+    def test_preflight_rejects_native_codex_project_hook_without_invocation_event(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "wrapped-skill"
             target.mkdir()
@@ -760,7 +780,193 @@ class LifecycleBasicsTest(unittest.TestCase):
             )
             manifest = {"integration": {"mode": "native_host_hook"}}
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_integration_contract(target, manifest)
+
+    def test_project_hook_is_repo_maintenance_not_skill_invocation(self):
+        integration = classify_integration_mode(
+            target_kind="single_skill",
+            root_entry="SKILL.md",
+            hook_files=[".codex/hooks.json", CODEX_START_HOOK_SCRIPT],
+            plugin_manifests=[],
+            skill_entries=[],
+        )
+
+        self.assertEqual(integration["mode"], "prompt_runtime_check")
+        self.assertFalse(integration["native_skill_invocation_hook_installed"])
+        self.assertTrue(integration["capabilities"]["repo_maintenance_hook"]["installed"])
+        self.assertFalse(
+            integration["capabilities"]["repo_maintenance_hook"]["covers_skill_invocation"]
+        )
+
+    def test_detected_skill_entry_requires_actual_status_prelude(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            skill = target / "SKILL.md"
+            skill.write_text("# Business only\n", encoding="utf-8")
+
+            before = detect_target_architecture(target)["integration"]["capabilities"][
+                "skill_entry_preflight"
+            ]
+            skill.write_text(
+                "## EvoZeus-wrapper 状态检查\n\n检查。\n\n# Business only\n",
+                encoding="utf-8",
+            )
+            after = detect_target_architecture(target)["integration"]["capabilities"][
+                "skill_entry_preflight"
+            ]
+
+            self.assertFalse(before["installed"])
+            self.assertFalse(before["covers_skill_invocation"])
+            self.assertTrue(after["installed"])
+            self.assertTrue(after["covers_skill_invocation"])
+
+    def test_detected_skill_entry_uses_manifest_selected_non_root_surface(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "bundle"
+            control = target / "skills/control/SKILL.md"
+            control.parent.mkdir(parents=True)
+            (target / "AGENTS.md").write_text("# Runtime\n", encoding="utf-8")
+            control.write_text(
+                "---\nname: control\n---\n\n"
+                "## EvoZeus-wrapper 状态检查\n\n检查。\n\n# Control\n",
+                encoding="utf-8",
+            )
+            manifest = target / ".evozeus-wrapper/wrapper.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(
+                json.dumps({"instruction_surface": "skills/control/SKILL.md"}),
+                encoding="utf-8",
+            )
+
+            integration = detect_target_architecture(target)["integration"]
+
+            self.assertEqual(integration["instruction_surface"], "skills/control/SKILL.md")
+            self.assertTrue(
+                integration["capabilities"]["skill_entry_preflight"]["installed"]
+            )
+
+    def test_manifest_selected_instruction_surface_cannot_escape_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "bundle"
+            target.mkdir()
+            (target / "AGENTS.md").write_text("# Runtime\n", encoding="utf-8")
+            outside = root / "outside.md"
+            outside.write_text(
+                "## EvoZeus-wrapper 状态检查\n\nExternal.\n",
+                encoding="utf-8",
+            )
+            manifest = target / ".evozeus-wrapper/wrapper.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "instruction_surface": "../outside.md",
+                        "integration": {
+                            "mode": "prompt_runtime_check",
+                            "capabilities": {
+                                "skill_entry_preflight": {
+                                    "installed": True,
+                                    "native_enforced": False,
+                                    "covers_skill_invocation": True,
+                                }
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            integration = detect_target_architecture(target)["integration"]
+
+            self.assertEqual(integration["instruction_surface"], "AGENTS.md")
+            self.assertFalse(
+                integration["capabilities"]["skill_entry_preflight"]["installed"]
+            )
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                preflight_root_entry_path(target)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_integration_contract(target, json.loads(manifest.read_text(encoding="utf-8")))
+
+    def test_preflight_rejects_native_invocation_claim_backed_only_by_project_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "wrapped-skill"
+            target.mkdir()
+            (target / ".codex").mkdir()
+            (target / ".codex" / "hooks.json").write_text('{"hooks":{}}', encoding="utf-8")
+            hook_script = target / CODEX_START_HOOK_SCRIPT
+            hook_script.parent.mkdir(parents=True)
+            hook_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+            manifest = {
+                "integration": {
+                    "mode": "native_host_hook",
+                    "native_host_hook_installed": True,
+                }
+            }
+
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_integration_contract(target, manifest)
+
+    def test_preflight_rejects_project_registration_that_claims_invocation_coverage(self):
+        manifest = build_wrapper_manifest(
+            "MetaInFLow/skill",
+            "v0.10.0",
+            [".codex/hooks.json", CODEX_START_HOOK_SCRIPT],
+            [],
+        )
+        manifest["hook_registration"]["codex"]["covers_skill_invocation"] = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_integration_contract(target, manifest)
+
+    def test_preflight_rejects_user_runtime_state_in_portable_manifest(self):
+        manifest = {
+            "integration": {
+                "mode": "prompt_runtime_check",
+                "native_skill_invocation_hook_installed": False,
+                "capabilities": {
+                    "global_session_dispatcher": {
+                        "installed": True,
+                        "native_enforced": True,
+                        "trust_status": "trusted",
+                        "covers_skill_invocation": False,
+                    }
+                },
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_integration_contract(target, manifest)
+
+    def test_preflight_rejects_skill_entry_claim_without_status_prelude(self):
+        manifest = {
+            "instruction_surface": "SKILL.md",
+            "integration": {
+                "mode": "prompt_runtime_check",
+                "native_skill_invocation_hook_installed": False,
+                "capabilities": {
+                    "skill_entry_preflight": {
+                        "installed": True,
+                        "native_enforced": False,
+                        "covers_skill_invocation": True,
+                    }
+                },
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            (target / "SKILL.md").write_text("# Business only\n", encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 check_integration_contract(target, manifest)
 
 
@@ -978,8 +1184,11 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
                 "evolution surface diagnosis result",
                 architecture["component_gaps"]["missing_concepts"],
             )
-            self.assertEqual(architecture["integration"]["mode"], "native_host_hook")
-            self.assertTrue(architecture["integration"]["native_host_hook_installed"])
+            self.assertEqual(architecture["integration"]["mode"], "bootstrap_skill")
+            self.assertFalse(architecture["integration"]["native_skill_invocation_hook_installed"])
+            self.assertTrue(
+                architecture["integration"]["capabilities"]["plugin_lifecycle_hook"]["installed"]
+            )
 
     def test_detect_target_architecture_marks_single_skill_as_prompt_runtime_check(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1027,6 +1236,7 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             skill_dir = target / "skills" / "sales-coach"
             skill_dir.mkdir()
             (skill_dir / "SKILL.md").write_text('---\nname: "sales-coach"\n---\n', encoding="utf-8")
+            apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
 
             def runner(args, cwd=None):
                 if args[:3] == ["gh", "repo", "view"]:
@@ -1061,6 +1271,12 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             self.assertTrue(report["repo"]["access"]["can_write"])
             self.assertEqual(report["publication"]["visibility"], "PRIVATE")
             self.assertEqual(report["version"]["status"], "missing_version_requires_owner_choice")
+            global_capability = report["skill"]["integration"]["capabilities"][
+                "global_session_dispatcher"
+            ]
+            self.assertTrue(global_capability["installed"])
+            self.assertEqual(global_capability["trust_status"], "pending_review")
+            self.assertFalse(global_capability["native_enforced"])
 
     def test_classify_integration_mode_names_manual_command_as_non_runtime_integration(self):
         integration = classify_integration_mode(
@@ -1171,10 +1387,29 @@ class WrapperManifestTest(unittest.TestCase):
             [],
         )
 
-        self.assertEqual(manifest["integration"]["mode"], "native_host_hook")
-        self.assertTrue(manifest["integration"]["native_host_hook_installed"])
+        self.assertEqual(manifest["integration"]["mode"], "prompt_runtime_check")
+        self.assertFalse(manifest["integration"]["native_skill_invocation_hook_installed"])
         self.assertTrue(manifest["integration"]["codex_project_hook"])
+        self.assertTrue(
+            manifest["integration"]["capabilities"]["repo_maintenance_hook"]["installed"]
+        )
         self.assertEqual(manifest["hook_registration"]["codex"]["event"], "SessionStart")
+        self.assertEqual(manifest["hook_registration"]["codex"]["matcher"], "startup|resume")
+        self.assertEqual(
+            manifest["hook_registration"]["codex"]["capability"],
+            "repo_maintenance_hook",
+        )
+        self.assertEqual(
+            manifest["hook_registration"]["codex"]["scope"],
+            "canonical_repository",
+        )
+        self.assertFalse(
+            manifest["hook_registration"]["codex"]["covers_skill_invocation"]
+        )
+        self.assertEqual(
+            manifest["hook_registration"]["codex"]["trust_status"],
+            "pending_review",
+        )
 
     def test_write_wrapper_manifest_skips_existing_without_force(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1334,6 +1569,12 @@ class ReinstallPlanningTest(unittest.TestCase):
 
             self.assertEqual(plan["stage"], "publish_reinstall")
             self.assertEqual(plan["actions"][0]["action"], "create_symlink")
+            self.assertEqual(plan["runtime_skill_installation"]["status"], "planned")
+            self.assertEqual(plan["runtime_hook_installation"]["status"], "not_installed")
+            self.assertEqual(
+                plan["runtime_hook_installation"]["scope"],
+                "all_registered_wrapped_skills",
+            )
 
     def test_plan_reinstall_detects_already_linked_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1498,6 +1739,1036 @@ class ReinstallPlanningTest(unittest.TestCase):
                 apply_reinstall("skill", without_skill, home, ["codex"])
 
             self.assertFalse(home.exists())
+
+
+class GlobalHookLifecycleTest(unittest.TestCase):
+    def test_global_hook_plan_blocks_invalid_existing_hooks_json_without_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            hooks_path = home / ".codex" / "hooks.json"
+            hooks_path.parent.mkdir(parents=True)
+            hooks_path.write_text("{not-json\n", encoding="utf-8")
+
+            plan = plan_global_hook_install(home=home, wrapper_root=Path.cwd())
+
+            self.assertEqual(plan["status"], "blocked")
+            self.assertFalse(plan["writes"])
+            self.assertTrue(plan["errors"])
+            self.assertEqual(hooks_path.read_text(encoding="utf-8"), "{not-json\n")
+
+    def test_global_hook_install_preserves_unrelated_hooks_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            hooks_path = home / ".codex" / "hooks.json"
+            hooks_path.parent.mkdir(parents=True)
+            unrelated = {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "shell",
+                            "hooks": [{"type": "command", "command": "python3 unrelated.py"}],
+                        }
+                    ]
+                }
+            }
+            hooks_path.write_text(json.dumps(unrelated), encoding="utf-8")
+
+            first = apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+            second = apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+            merged = json.loads(hooks_path.read_text(encoding="utf-8"))
+            session_commands = [
+                handler["command"]
+                for entry in merged["hooks"]["SessionStart"]
+                for handler in entry["hooks"]
+            ]
+
+            self.assertEqual(first["status"], "installed")
+            self.assertEqual(second["status"], "already_installed")
+            self.assertEqual(session_commands.count(GLOBAL_DISPATCHER_COMMAND), 1)
+            self.assertIn("PreToolUse", merged["hooks"])
+            self.assertEqual(read_global_hook_status(home)["trust_status"], "pending_review")
+
+    def test_global_hook_uninstall_removes_only_evozeus_registration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+            hooks_path = home / ".codex" / "hooks.json"
+            hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+            hooks["hooks"]["SessionStart"].append(
+                {
+                    "matcher": "startup",
+                    "hooks": [{"type": "command", "command": "python3 keep.py"}],
+                }
+            )
+            hooks_path.write_text(json.dumps(hooks), encoding="utf-8")
+
+            report = apply_global_hook_uninstall(home=home, approve=True)
+            remaining = json.loads(hooks_path.read_text(encoding="utf-8"))
+            commands = [
+                handler["command"]
+                for entry in remaining["hooks"]["SessionStart"]
+                for handler in entry["hooks"]
+            ]
+
+            self.assertEqual(report["status"], "uninstalled")
+            self.assertNotIn(GLOBAL_DISPATCHER_COMMAND, commands)
+            self.assertIn("python3 keep.py", commands)
+
+    def test_global_hook_preserves_unrelated_handler_in_same_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            hooks_path = home / ".codex" / "hooks.json"
+            hooks_path.parent.mkdir(parents=True)
+            hooks_path.write_text(
+                json.dumps(
+                    {
+                        "hooks": {
+                            "SessionStart": [
+                                {
+                                    "matcher": "startup|resume",
+                                    "hooks": [
+                                        {"type": "command", "command": GLOBAL_DISPATCHER_COMMAND},
+                                        {"type": "command", "command": "python3 keep-same-entry.py"},
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+            installed = json.loads(hooks_path.read_text(encoding="utf-8"))
+            installed_commands = [
+                handler["command"]
+                for entry in installed["hooks"]["SessionStart"]
+                for handler in entry["hooks"]
+            ]
+            apply_global_hook_uninstall(home=home, approve=True)
+            uninstalled = json.loads(hooks_path.read_text(encoding="utf-8"))
+            uninstalled_commands = [
+                handler["command"]
+                for entry in uninstalled["hooks"]["SessionStart"]
+                for handler in entry["hooks"]
+            ]
+
+            self.assertEqual(installed_commands.count(GLOBAL_DISPATCHER_COMMAND), 1)
+            self.assertIn("python3 keep-same-entry.py", installed_commands)
+            self.assertNotIn(GLOBAL_DISPATCHER_COMMAND, uninstalled_commands)
+            self.assertIn("python3 keep-same-entry.py", uninstalled_commands)
+
+    def test_global_hook_install_rolls_back_when_a_write_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            hooks_path = home / ".codex" / "hooks.json"
+            hooks_path.parent.mkdir(parents=True)
+            original_hooks = '{"hooks":{"PreToolUse":[]}}\n'
+            hooks_path.write_text(original_hooks, encoding="utf-8")
+
+            from scripts import evozeus_wrapper_global_hook as global_hook
+
+            original_write = global_hook._atomic_write
+            calls = 0
+
+            def fail_second_write(path, data):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("synthetic write failure")
+                return original_write(path, data)
+
+            with patch(
+                "scripts.evozeus_wrapper_global_hook._atomic_write",
+                side_effect=fail_second_write,
+            ), self.assertRaisesRegex(OSError, "synthetic write failure"):
+                apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+
+            self.assertEqual(hooks_path.read_text(encoding="utf-8"), original_hooks)
+            self.assertFalse((home / ".evozeus/hooks/evozeus_wrapper_dispatcher.py").exists())
+            self.assertFalse((home / ".evozeus/hooks/state.json").exists())
+
+    def test_global_hook_trust_is_recorded_separately_after_explicit_approval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+
+            pending = read_global_hook_status(home)
+            recorded = record_global_hook_trust(home, status="trusted", approve=True)
+            trusted = read_global_hook_status(home)
+
+            self.assertEqual(pending["trust_status"], "pending_review")
+            self.assertEqual(recorded["status"], "trusted")
+            self.assertEqual(trusted["trust_status"], "trusted")
+
+    def test_global_hook_cli_plans_and_installs_with_explicit_approval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            environment = {**os.environ, "HOME": str(home)}
+
+            plan = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper.py",
+                    "hook",
+                    "global",
+                    "plan",
+                    "--json",
+                ],
+                text=True,
+                capture_output=True,
+                env=environment,
+                check=False,
+            )
+            install = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper.py",
+                    "hook",
+                    "global",
+                    "install",
+                    "--approve",
+                    "--json",
+                ],
+                text=True,
+                capture_output=True,
+                env=environment,
+                check=False,
+            )
+
+            self.assertEqual(plan.returncode, 0, plan.stderr)
+            self.assertEqual(json.loads(plan.stdout)["status"], "planned")
+            self.assertEqual(install.returncode, 0, install.stderr)
+            self.assertEqual(json.loads(install.stdout)["status"], "installed")
+            self.assertTrue((home / ".codex/hooks.json").is_file())
+
+
+class GlobalDispatcherTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        template = Path("templates/global/evozeus_wrapper_dispatcher.py").resolve()
+        spec = importlib.util.spec_from_file_location("evozeus_wrapper_global_dispatcher", template)
+        cls.module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(cls.module)
+
+    def create_wrapped_target(self, home: Path, name: str, version: str) -> Path:
+        target = home.parent / f"canonical-{name}"
+        target.mkdir()
+        manifest = target / ".evozeus-wrapper" / "wrapper.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "canonical_repo": f"MetaInFLow/{name}",
+                    "wrapper_version": version,
+                }
+            ),
+            encoding="utf-8",
+        )
+        pointer = home / ".evozeus" / ".projects" / "MetaInFLow" / name
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        pointer.symlink_to(target)
+        return target
+
+    def test_dispatcher_blocks_with_aggregate_count_when_targets_are_stale(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            self.create_wrapped_target(home, "private-skill-a", "v0.9.1")
+            self.create_wrapped_target(home, "private-skill-b", "v0.8.0")
+
+            payload = self.module.evaluate_session_start(
+                home=home,
+                latest_resolver=lambda: {
+                    "version": "v0.10.0",
+                    "source": "test",
+                    "error": None,
+                },
+            )
+            serialized = json.dumps(payload, ensure_ascii=False)
+
+            self.assertFalse(payload["continue"])
+            self.assertIn("2 个 EvoZeus harness 落后", payload["stopReason"])
+            self.assertNotIn("private-skill", serialized)
+            self.assertNotIn(str(home), serialized)
+
+    def test_dispatcher_allows_when_all_targets_are_current(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            self.create_wrapped_target(home, "current-skill", "v0.10.0")
+
+            payload = self.module.evaluate_session_start(
+                home=home,
+                latest_resolver=lambda: {
+                    "version": "v0.10.0",
+                    "source": "test",
+                    "error": None,
+                },
+            )
+
+            self.assertTrue(payload["continue"])
+            self.assertIn("current", payload["systemMessage"])
+
+    def test_dispatcher_uses_cached_latest_when_remote_lookup_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            cache = home / ".evozeus/cache/evozeus-wrapper-latest.json"
+            cache.parent.mkdir(parents=True)
+            cache.write_text(
+                json.dumps({"version": "v0.10.0", "checked_at_epoch": 1000}),
+                encoding="utf-8",
+            )
+
+            resolution = self.module.resolve_latest_version(
+                home=home,
+                now_epoch=5000,
+                environment={},
+                fetcher=lambda: {"version": None, "url": None, "error": "offline"},
+            )
+
+            self.assertEqual(resolution["version"], "v0.10.0")
+            self.assertEqual(resolution["source"], "stale_cache")
+
+    def test_dispatcher_warns_and_allows_when_latest_is_unknown_without_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            self.create_wrapped_target(home, "offline-skill", "v0.9.1")
+
+            payload = self.module.evaluate_session_start(
+                home=home,
+                latest_resolver=lambda: {
+                    "version": None,
+                    "source": "unavailable",
+                    "error": "offline",
+                },
+            )
+
+            self.assertTrue(payload["continue"])
+            self.assertIn("unavailable", payload["systemMessage"])
+
+    def test_dispatcher_blocks_deterministic_manifest_mismatch_without_private_details(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            target = self.create_wrapped_target(home, "mismatch-skill", "v0.10.0")
+            manifest = target / ".evozeus-wrapper/wrapper.json"
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            data["canonical_repo"] = "MetaInFLow/something-else"
+            manifest.write_text(json.dumps(data), encoding="utf-8")
+
+            payload = self.module.evaluate_session_start(
+                home=home,
+                latest_resolver=lambda: {
+                    "version": "v0.10.0",
+                    "source": "test",
+                    "error": None,
+                },
+            )
+            serialized = json.dumps(payload, ensure_ascii=False)
+
+            self.assertFalse(payload["continue"])
+            self.assertIn("本地 harness 注册异常", payload["stopReason"])
+            self.assertNotIn("mismatch-skill", serialized)
+
+    def test_dispatcher_rejects_non_symlink_project_pointer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            pointer = home / ".evozeus/.projects/MetaInFLow/not-a-pointer"
+            manifest = pointer / ".evozeus-wrapper/wrapper.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "canonical_repo": "MetaInFLow/not-a-pointer",
+                        "wrapper_version": "v0.10.0",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            payload = self.module.evaluate_session_start(
+                home=home,
+                latest_resolver=lambda: self.fail(
+                    "invalid local registration must block before remote lookup"
+                ),
+            )
+
+            self.assertFalse(payload["continue"])
+            self.assertIn("本地 harness 注册异常", payload["stopReason"])
+
+    def test_installed_dispatcher_runs_from_consumer_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            consumer = Path(tmp) / "consumer-workspace"
+            consumer.mkdir()
+            self.create_wrapped_target(home, "consumer-skill", "v0.9.1")
+            apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+            dispatcher = home / ".evozeus/hooks/evozeus_wrapper_dispatcher.py"
+
+            result = subprocess.run(
+                [sys.executable, str(dispatcher)],
+                input=json.dumps(
+                    {
+                        "hook_event_name": "SessionStart",
+                        "source": "startup",
+                        "cwd": str(consumer),
+                    }
+                ),
+                text=True,
+                capture_output=True,
+                cwd=consumer,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "EVOZEUS_WRAPPER_LATEST_VERSION": "v0.10.0",
+                },
+                check=False,
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(payload["continue"])
+            self.assertIn("1 个 EvoZeus harness 落后", payload["stopReason"])
+
+    def test_project_and_global_hooks_share_one_remote_lookup(self):
+        project_template = Path(
+            "templates/target/.codex/hooks/evozeus_wrapper_start_check.py"
+        ).resolve()
+        spec = importlib.util.spec_from_file_location(
+            "evozeus_wrapper_project_hook_for_dedup",
+            project_template,
+        )
+        project_module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(project_module)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            calls = []
+
+            def fetch_latest():
+                calls.append("remote")
+                return {
+                    "version": "v0.10.0",
+                    "url": "https://example.test/v0.10.0",
+                    "error": None,
+                }
+
+            project_resolution = project_module.resolve_latest_version(
+                current="v0.9.1",
+                environment={},
+                fetcher=fetch_latest,
+                home=home,
+                now_epoch=1200,
+            )
+            global_resolution = self.module.resolve_latest_version(
+                home=home,
+                now_epoch=1200,
+                environment={},
+                fetcher=fetch_latest,
+            )
+
+        self.assertEqual(calls, ["remote"])
+        self.assertEqual(project_resolution["source"], "github_latest_release")
+        self.assertEqual(global_resolution["source"], "fresh_cache")
+
+
+class UpgradeAllHarnessTest(unittest.TestCase):
+    @staticmethod
+    def latest_v010():
+        return {"version": "v0.10.0", "source": "test", "error": None}
+
+    def create_wrapper_source(self, root: Path, version: str = "v0.10.0") -> Path:
+        wrapper_root = root / "wrapper-source"
+        wrapper_root.mkdir()
+        (wrapper_root / "CHANGELOG.md").write_text(
+            f"# Changelog\n\n## [{version}] - 2026-07-20\n",
+            encoding="utf-8",
+        )
+        for relative in (
+            "scripts/evozeus_wrapper_preflight.py",
+            "templates/global/evozeus_wrapper_dispatcher.py",
+            "templates/target/.codex/hooks/evozeus_wrapper_start_check.py",
+            "templates/target/.github/workflows/evozeus-wrapper-preflight.yml",
+            "templates/target/docs/onboarding.md",
+        ):
+            source = Path(relative)
+            destination = wrapper_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+        return wrapper_root
+
+    def create_upgrade_target(
+        self,
+        home: Path,
+        name: str,
+        version: str = "v0.9.1",
+        *,
+        initialize_git: bool = False,
+    ) -> Path:
+        target = home.parent / f"canonical-{name}"
+        target.mkdir()
+        (target / "SKILL.md").write_text(f"original {name}\n", encoding="utf-8")
+        manifest = target / ".evozeus-wrapper/wrapper.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "canonical_repo": f"MetaInFLow/{name}",
+                    "wrapper_version": version,
+                    "layout_version": 2,
+                    "instruction_surface": "SKILL.md",
+                }
+            ),
+            encoding="utf-8",
+        )
+        pointer = home / ".evozeus/.projects/MetaInFLow" / name
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        pointer.symlink_to(target)
+        if initialize_git:
+            subprocess.run(["git", "init", "-q", str(target)], check=True)
+            subprocess.run(["git", "-C", str(target), "add", "."], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(target),
+                    "-c",
+                    "user.name=EvoZeus Test",
+                    "-c",
+                    "user.email=evozeus@example.invalid",
+                    "commit",
+                    "-qm",
+                    "fixture",
+                ],
+                check=True,
+            )
+        return target.resolve()
+
+    def test_upgrade_all_prevalidates_every_target_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            clean = self.create_upgrade_target(home, "clean")
+            dirty = self.create_upgrade_target(home, "dirty")
+
+            def fake_plan(target, latest_version, **kwargs):
+                conflicts = ["target git worktree is not clean"] if target == dirty else []
+                return {
+                    "target": str(target),
+                    "migration_required": True,
+                    "can_apply": not conflicts,
+                    "conflicts": conflicts,
+                    "instruction_surface": "SKILL.md",
+                    "migration_record": ".evozeus-wrapper/docs/migrations/refresh.md",
+                    "moves": [],
+                    "managed_file_refreshes": [],
+                }
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.plan_target_layout_migration",
+                side_effect=fake_plan,
+            ):
+                report = plan_upgrade_all(
+                    home,
+                    wrapper_root,
+                    "v0.10.0",
+                    latest_resolver=self.latest_v010,
+                )
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertFalse(report["writes"])
+            self.assertIn("original clean", (clean / "SKILL.md").read_text(encoding="utf-8"))
+            self.assertIn("original dirty", (dirty / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_upgrade_all_blocks_incomplete_wrapper_source_before_target_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            self.create_upgrade_target(home, "source-contract")
+            (wrapper_root / "scripts/evozeus_wrapper_preflight.py").unlink()
+
+            report = plan_upgrade_all(
+                home,
+                wrapper_root,
+                "v0.10.0",
+                latest_resolver=self.latest_v010,
+            )
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("source is missing" in error for error in report["errors"]))
+
+    def test_upgrade_all_rolls_back_every_modified_target_on_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            first = self.create_upgrade_target(home, "first")
+            second = self.create_upgrade_target(home, "second")
+            (first / "README.md").write_text("business first\n", encoding="utf-8")
+            (second / "README.md").write_text("business second\n", encoding="utf-8")
+            (first / "empty-business-dir").mkdir()
+
+            def fake_plan(target, latest_version, **kwargs):
+                return {
+                    "target": str(target),
+                    "migration_required": True,
+                    "can_apply": True,
+                    "conflicts": [],
+                    "instruction_surface": "SKILL.md",
+                    "migration_record": ".evozeus-wrapper/docs/migrations/refresh.md",
+                    "moves": [],
+                    "managed_file_refreshes": [],
+                    "text_rewrite_candidates": ["README.md"],
+                    "generated_cache_candidates": [],
+                }
+
+            def fake_migrate(target, latest_version, **kwargs):
+                (target / "SKILL.md").write_text("modified\n", encoding="utf-8")
+                (target / "README.md").write_text("modified business\n", encoding="utf-8")
+                if target == second:
+                    raise ValueError("synthetic migration failure")
+                return {"writes": True, "changed_files": ["SKILL.md"]}
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.plan_target_layout_migration",
+                side_effect=fake_plan,
+            ), patch(
+                "scripts.evozeus_wrapper_lifecycle.migrate_target_layout",
+                side_effect=fake_migrate,
+            ):
+                report = apply_upgrade_all(
+                    home,
+                    wrapper_root,
+                    "v0.10.0",
+                    approve=True,
+                    latest_resolver=self.latest_v010,
+                )
+
+            self.assertEqual(report["status"], "rolled_back")
+            self.assertFalse(report["writes"])
+            self.assertEqual((first / "SKILL.md").read_text(encoding="utf-8"), "original first\n")
+            self.assertEqual((second / "SKILL.md").read_text(encoding="utf-8"), "original second\n")
+            self.assertEqual((first / "README.md").read_text(encoding="utf-8"), "business first\n")
+            self.assertEqual((second / "README.md").read_text(encoding="utf-8"), "business second\n")
+            self.assertTrue((first / "empty-business-dir").is_dir())
+
+    def test_upgrade_all_real_migration_restores_broad_rewrites_on_validation_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            target = root / "canonical-legacy"
+            target.mkdir()
+            create_complete_legacy_target(target)
+            readme = target / "README.md"
+            readme.write_text("Use .evozeus_evoinfra for wrapper docs.\n", encoding="utf-8")
+            original_readme = readme.read_bytes()
+            pointer = home / ".evozeus/.projects/MetaInFLow/legacy-skill"
+            pointer.parent.mkdir(parents=True)
+            pointer.symlink_to(target)
+            subprocess.run(["git", "init", "-q", str(target)], check=True)
+            subprocess.run(["git", "-C", str(target), "add", "."], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(target),
+                    "-c",
+                    "user.name=EvoZeus Test",
+                    "-c",
+                    "user.email=evozeus@example.invalid",
+                    "commit",
+                    "-qm",
+                    "legacy fixture",
+                ],
+                check=True,
+            )
+
+            from scripts import evozeus_wrapper_lifecycle as lifecycle
+
+            original_run_command = lifecycle.run_command
+
+            def fail_post_validation(args, cwd=None):
+                if len(args) > 2 and args[1].endswith("evozeus_wrapper_preflight.py"):
+                    return {"returncode": 1, "stdout": "", "stderr": "synthetic validation failure"}
+                return original_run_command(args, cwd)
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.run_command",
+                side_effect=fail_post_validation,
+            ):
+                report = apply_upgrade_all(
+                    home,
+                    Path.cwd(),
+                    "v0.10.0",
+                    approve=True,
+                    latest_resolver=self.latest_v010,
+                )
+
+            self.assertEqual(report["status"], "rolled_back")
+            self.assertEqual(readme.read_bytes(), original_readme)
+            self.assertTrue((target / ".evozeus_evoinfra/wrapper.json").is_file())
+            self.assertFalse((target / ".evozeus-wrapper/wrapper.json").exists())
+            git_status = subprocess.run(
+                ["git", "-C", str(target), "status", "--porcelain"],
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual(git_status.stdout, "")
+
+    def test_upgrade_all_is_idempotent_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            target = self.create_upgrade_target(home, "current-after-upgrade")
+
+            def fake_plan(target, latest_version, **kwargs):
+                return {
+                    "target": str(target),
+                    "migration_required": True,
+                    "can_apply": True,
+                    "conflicts": [],
+                    "instruction_surface": "SKILL.md",
+                    "migration_record": ".evozeus-wrapper/docs/migrations/refresh.md",
+                    "moves": [],
+                    "managed_file_refreshes": [],
+                }
+
+            def fake_migrate(target, latest_version, **kwargs):
+                manifest = target / ".evozeus-wrapper/wrapper.json"
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                data["wrapper_version"] = latest_version
+                manifest.write_text(json.dumps(data), encoding="utf-8")
+                return {"writes": True, "changed_files": [".evozeus-wrapper/wrapper.json"]}
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.plan_target_layout_migration",
+                side_effect=fake_plan,
+            ), patch(
+                "scripts.evozeus_wrapper_lifecycle.migrate_target_layout",
+                side_effect=fake_migrate,
+            ):
+                first = apply_upgrade_all(
+                    home,
+                    wrapper_root,
+                    "v0.10.0",
+                    approve=True,
+                    latest_resolver=self.latest_v010,
+                )
+                second = apply_upgrade_all(
+                    home,
+                    wrapper_root,
+                    "v0.10.0",
+                    approve=True,
+                    latest_resolver=self.latest_v010,
+                )
+
+            self.assertEqual(first["status"], "applied")
+            self.assertEqual(second["status"], "up_to_date")
+            manifest = json.loads(
+                (target / ".evozeus-wrapper/wrapper.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["wrapper_version"], "v0.10.0")
+
+    def test_upgrade_all_refreshes_an_installed_global_dispatcher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            target = self.create_upgrade_target(home, "refresh-global")
+            apply_global_hook_install(home, wrapper_root, approve=True)
+            installed_dispatcher = home / ".evozeus/hooks/evozeus_wrapper_dispatcher.py"
+            installed_dispatcher.write_text("# outdated dispatcher\n", encoding="utf-8")
+
+            def fake_plan(target_path, latest_version, **kwargs):
+                return {
+                    "target": str(target_path),
+                    "migration_required": True,
+                    "can_apply": True,
+                    "conflicts": [],
+                    "instruction_surface": "SKILL.md",
+                    "migration_record": ".evozeus-wrapper/docs/migrations/refresh.md",
+                    "moves": [],
+                    "managed_file_refreshes": [],
+                }
+
+            migration_sources = []
+
+            def fake_migrate(target_path, latest_version, **kwargs):
+                migration_sources.append(kwargs.get("wrapper_root"))
+                manifest = target_path / ".evozeus-wrapper/wrapper.json"
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                data["wrapper_version"] = latest_version
+                manifest.write_text(json.dumps(data), encoding="utf-8")
+                return {"writes": True, "changed_files": [str(manifest)]}
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.plan_target_layout_migration",
+                side_effect=fake_plan,
+            ), patch(
+                "scripts.evozeus_wrapper_lifecycle.migrate_target_layout",
+                side_effect=fake_migrate,
+            ):
+                report = apply_upgrade_all(
+                    home,
+                    wrapper_root,
+                    "v0.10.0",
+                    approve=True,
+                    latest_resolver=self.latest_v010,
+                )
+
+            self.assertEqual(report["status"], "applied")
+            self.assertEqual(report["global_hook_refresh"]["status"], "installed")
+            self.assertEqual(
+                installed_dispatcher.read_bytes(),
+                (wrapper_root / "templates/global/evozeus_wrapper_dispatcher.py").read_bytes(),
+            )
+            self.assertEqual(read_global_hook_status(home)["trust_status"], "pending_review")
+            self.assertEqual(migration_sources, [wrapper_root.resolve()])
+            self.assertEqual(
+                json.loads(
+                    (target / ".evozeus-wrapper/wrapper.json").read_text(encoding="utf-8")
+                )["wrapper_version"],
+                "v0.10.0",
+            )
+
+    def test_upgrade_all_cli_reports_up_to_date_for_empty_registry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper.py",
+                    "harness",
+                    "upgrade-all",
+                    "--latest-version",
+                    "v0.10.0",
+                    "--wrapper-root",
+                    str(wrapper_root),
+                    "--dry-run",
+                    "--json",
+                ],
+                text=True,
+                capture_output=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "EVOZEUS_WRAPPER_LATEST_VERSION": "v0.10.0",
+                },
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["status"], "up_to_date")
+
+    def test_upgrade_all_cli_serializes_populated_registry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            self.create_upgrade_target(home, "planned-cli", initialize_git=True)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper.py",
+                    "harness",
+                    "upgrade-all",
+                    "--latest-version",
+                    "v0.10.0",
+                    "--wrapper-root",
+                    str(wrapper_root),
+                    "--dry-run",
+                    "--json",
+                ],
+                text=True,
+                capture_output=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "EVOZEUS_WRAPPER_LATEST_VERSION": "v0.10.0",
+                },
+                check=False,
+            )
+
+            payload = json.loads(result.stdout)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(payload["status"], "planned")
+            self.assertEqual(payload["target_count"], 1)
+            self.assertIsInstance(payload["targets"][0]["target"], str)
+
+    def test_upgrade_all_requires_verifiable_clean_git_worktree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            self.create_upgrade_target(home, "not-a-git-repo")
+
+            report = plan_upgrade_all(
+                home,
+                wrapper_root,
+                "v0.10.0",
+                latest_resolver=self.latest_v010,
+            )
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("git worktree" in error for error in report["errors"]))
+
+    def test_upgrade_all_rejects_non_authoritative_latest_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            self.create_upgrade_target(home, "stale-latest")
+
+            report = plan_upgrade_all(
+                home,
+                wrapper_root,
+                "v0.10.0",
+                latest_resolver=lambda: {
+                    "version": "v0.9.1",
+                    "source": "test",
+                    "error": None,
+                },
+            )
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("authoritative" in error for error in report["errors"]))
+
+    def test_upgrade_all_checks_authority_before_up_to_date_decision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root, version="v0.9.1")
+            self.create_upgrade_target(home, "appears-current", version="v0.9.1")
+            calls = []
+
+            def resolve_latest():
+                calls.append("resolved")
+                return {"version": "v0.10.0", "source": "test", "error": None}
+
+            report = plan_upgrade_all(
+                home,
+                wrapper_root,
+                "v0.9.1",
+                latest_resolver=resolve_latest,
+            )
+
+            self.assertEqual(calls, ["resolved"])
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("authoritative" in error for error in report["errors"]))
+
+    def test_upgrade_all_rejects_symlinked_write_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            target = self.create_upgrade_target(home, "symlink-write")
+            external = root / "external-readme.md"
+            external.write_text("outside\n", encoding="utf-8")
+            (target / "README.md").symlink_to(external)
+            subprocess.run(["git", "init", "-q", str(target)], check=True)
+            subprocess.run(["git", "-C", str(target), "add", "."], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(target),
+                    "-c",
+                    "user.name=EvoZeus Test",
+                    "-c",
+                    "user.email=evozeus@example.invalid",
+                    "commit",
+                    "-qm",
+                    "symlink fixture",
+                ],
+                check=True,
+            )
+
+            report = plan_upgrade_all(
+                home,
+                wrapper_root,
+                "v0.10.0",
+                latest_resolver=self.latest_v010,
+            )
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("symlink" in error for error in report["errors"]))
+            self.assertEqual(external.read_text(encoding="utf-8"), "outside\n")
+
+    def test_direct_migrate_layout_rejects_symlinked_write_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            target = self.create_upgrade_target(home, "direct-symlink")
+            external = root / "outside-direct.md"
+            external.write_text("Use .evozeus_evoinfra outside.\n", encoding="utf-8")
+            (target / "README.md").symlink_to(external)
+
+            plan = plan_target_layout_migration(target, "v0.10.0")
+
+            self.assertFalse(plan["can_apply"])
+            self.assertTrue(any("symlink" in error for error in plan["conflicts"]))
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                migrate_target_layout(target, "v0.10.0")
+            self.assertEqual(
+                external.read_text(encoding="utf-8"),
+                "Use .evozeus_evoinfra outside.\n",
+            )
+
+    def test_upgrade_all_rejects_unwritable_target_before_apply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            target = self.create_upgrade_target(home, "unwritable", initialize_git=True)
+
+            real_access = os.access
+
+            def access(path, mode):
+                return False if Path(path) == target else real_access(path, mode)
+
+            with patch("scripts.evozeus_wrapper_global_hook.os.access", side_effect=access):
+                report = plan_upgrade_all(
+                    home,
+                    wrapper_root,
+                    "v0.10.0",
+                    latest_resolver=self.latest_v010,
+                )
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("not writable" in error for error in report["errors"]))
+
+    def test_upgrade_all_rejects_unwritable_destination_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            target = self.create_upgrade_target(home, "unwritable-parent", initialize_git=True)
+            github = target / ".github"
+            github.mkdir()
+
+            real_access = os.access
+
+            def access(path, mode):
+                return False if Path(path) == github else real_access(path, mode)
+
+            with patch("scripts.evozeus_wrapper_global_hook.os.access", side_effect=access):
+                report = plan_upgrade_all(
+                    home,
+                    wrapper_root,
+                    "v0.10.0",
+                    latest_resolver=self.latest_v010,
+                )
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertTrue(any("parent is not writable" in error for error in report["errors"]))
 
 
 class EvolutionAndUpgradePlanningTest(unittest.TestCase):
@@ -1775,6 +3046,14 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertEqual(advisory.returncode, 0)
             self.assertTrue(advisory_payload["continue"])
             self.assertIn("non-breaking upgrade", advisory_payload["systemMessage"])
+            self.assertIn(
+                "capability=repo_maintenance_hook",
+                advisory_payload["hookSpecificOutput"]["additionalContext"],
+            )
+            self.assertIn(
+                "scope=canonical_repository",
+                advisory_payload["hookSpecificOutput"]["additionalContext"],
+            )
 
             strict_env = {
                 **os.environ,
@@ -1803,15 +3082,17 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
         assert spec and spec.loader
         spec.loader.exec_module(module)
 
-        result = module.resolve_latest_version(
-            current="v0.7.0",
-            environment={},
-            fetcher=lambda: {
-                "version": "v0.8.0",
-                "url": "https://example.test/v0.8.0",
-                "error": None,
-            },
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = module.resolve_latest_version(
+                current="v0.7.0",
+                environment={},
+                fetcher=lambda: {
+                    "version": "v0.8.0",
+                    "url": "https://example.test/v0.8.0",
+                    "error": None,
+                },
+                home=Path(tmp) / "home",
+            )
 
         self.assertEqual(result["version"], "v0.8.0")
         self.assertEqual(result["source"], "github_latest_release")
@@ -1824,15 +3105,71 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
         assert spec and spec.loader
         spec.loader.exec_module(module)
 
-        result = module.resolve_latest_version(
-            current="v0.8.0",
-            environment={},
-            fetcher=lambda: {"version": None, "url": None, "error": "offline"},
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = module.resolve_latest_version(
+                current="v0.8.0",
+                environment={},
+                fetcher=lambda: {"version": None, "url": None, "error": "offline"},
+                home=Path(tmp) / "home",
+            )
 
         self.assertIsNone(result["version"])
         self.assertEqual(result["source"], "unavailable")
         self.assertEqual(result["error"], "offline")
+
+    def test_codex_project_hook_reuses_fresh_global_dispatcher_cache(self):
+        template_path = Path("templates/target/.codex/hooks/evozeus_wrapper_start_check.py").resolve()
+        spec = importlib.util.spec_from_file_location("evozeus_wrapper_hook_template_cache", template_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            cache = home / ".evozeus/cache/evozeus-wrapper-latest.json"
+            cache.parent.mkdir(parents=True)
+            cache.write_text(
+                json.dumps({"version": "v0.10.0", "checked_at_epoch": 1000}),
+                encoding="utf-8",
+            )
+
+            result = module.resolve_latest_version(
+                current="v0.9.1",
+                environment={},
+                fetcher=lambda: self.fail("fresh global cache should avoid another remote lookup"),
+                home=home,
+                now_epoch=1100,
+            )
+
+        self.assertEqual(result["version"], "v0.10.0")
+        self.assertEqual(result["source"], "global_dispatcher_cache")
+
+    def test_codex_project_hook_populates_shared_cache_after_remote_lookup(self):
+        template_path = Path("templates/target/.codex/hooks/evozeus_wrapper_start_check.py").resolve()
+        spec = importlib.util.spec_from_file_location("evozeus_wrapper_hook_template_write_cache", template_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            result = module.resolve_latest_version(
+                current="v0.9.1",
+                environment={},
+                fetcher=lambda: {
+                    "version": "v0.10.0",
+                    "url": "https://example.test/v0.10.0",
+                    "error": None,
+                },
+                home=home,
+                now_epoch=1200,
+            )
+            cache = json.loads(
+                (home / module.GLOBAL_CACHE_PATH).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(result["source"], "github_latest_release")
+        self.assertEqual(cache, {"version": "v0.10.0", "checked_at_epoch": 1200})
 
 
 if __name__ == "__main__":

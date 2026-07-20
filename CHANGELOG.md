@@ -6,6 +6,34 @@ All notable changes to EvoZeus-wrapper are recorded here.
 
 - None yet.
 
+## [v0.10.0] - 2026-07-20
+
+### Added
+
+- Added an explicit user-level Codex `SessionStart` dispatcher lifecycle with plan, install, status, trust, uninstall, structured merge, backup, rollback, and idempotency.
+- Added strict aggregate gating for all registered wrapped Skills, using one authoritative latest-release lookup with fresh and bounded stale cache fallback.
+- Added transactional `harness upgrade-all` planning and apply support with authoritative-version, clean-Git and write-access prevalidation, complete write-set backups, cross-target rollback, and idempotency.
+- Added capability-scoped manifest and diagnosis fields for project maintenance, global session dispatch, Skill-entry preflight, tool gateways, plugin lifecycle, and future Skill invocation hooks.
+
+### Fixed
+
+- Stopped treating target project-local hooks as evidence of native per-Skill invocation coverage. They are now reported as `repo_maintenance_hook` with `canonical_repository` scope.
+- Restricted generated project hook matchers to verified `startup|resume` sources and made project/global checks reuse the shared latest-release cache.
+- Separated runtime Skill installation, global hook installation, and Codex trust status in lifecycle reports.
+- Preserved unrelated handlers even when they share one `SessionStart` entry with the EvoZeus dispatcher, and made populated upgrade plans JSON-safe.
+- Required portable manifests to keep user-level installation/trust state unset and to back Skill-entry capability claims with a real status prelude.
+
+### Changed
+
+- Bumped newly generated wrapper harnesses to `v0.10.0`.
+- Updated the Skill entry preflight contract to remain the precise, prompt-enforced fallback until Codex provides a native `SkillInvoke` lifecycle event.
+
+### Verification
+
+- `python3 -m pytest -q` (118 passed)
+- `python3 -m py_compile scripts/evozeus_wrapper.py scripts/evozeus_wrapper_bootstrap.py scripts/evozeus_wrapper_global_hook.py scripts/evozeus_wrapper_lifecycle.py scripts/evozeus_wrapper_preflight.py templates/global/evozeus_wrapper_dispatcher.py templates/target/.codex/hooks/evozeus_wrapper_start_check.py`
+- Temporary user-home install/trust/status/uninstall smoke test and consumer-workspace dispatcher test.
+
 ## [v0.9.1] - 2026-07-18
 
 ### Fixed

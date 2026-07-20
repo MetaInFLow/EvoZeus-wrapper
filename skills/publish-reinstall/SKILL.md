@@ -22,6 +22,10 @@ python3 scripts/evozeus_wrapper.py publish reinstall \
   --canonical-path /absolute/path/to/canonical/repo \
   --target codex \
   --json
+
+python3 scripts/evozeus_wrapper.py hook global plan --json
+python3 scripts/evozeus_wrapper.py hook global install --approve --json
+python3 scripts/evozeus_wrapper.py hook global status --json
 ```
 
 If a real directory must be replaced after reviewing the dry-run, add `--approve-archive`. The directory moves under `~/.evozeus/archives/runtime-installs/`; it is never deleted.
@@ -36,9 +40,13 @@ If a real directory must be replaced after reviewing the dry-run, add `--approve
 - Real directory installs require explicit archive approval before replacement, even when `SKILL.md` is identical.
 - A differing real directory may be archived only with the same explicit approval; preserve its archive path in the JSON report.
 - Files and other unsupported install types require manual handling.
+- Runtime Skill symlink installation and user-level global hook installation are separate outcomes in the report.
+- A written global hook registration remains `pending_review` until the user reviews it through Codex `/hooks` and records the trust decision with `hook global trust`.
+- The global dispatcher checks all registered wrapped Skills at `SessionStart`; it is not a native per-Skill invocation hook.
 
 ## Stop Conditions
 
 - A real directory exists and `--approve-archive` was not supplied.
 - The install path is an unsupported type.
 - Release readiness checks fail.
+- The existing user-level hooks config is invalid JSON or global hook installation lacks explicit approval.

@@ -12,6 +12,11 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from .evozeus_wrapper_global_hook import read_global_hook_status
+except ImportError:
+    from evozeus_wrapper_global_hook import read_global_hook_status
+
 
 STAGE_LABELS = {
     "environment": "[1/5] Environment Diagnosis",
@@ -40,7 +45,7 @@ OLDEST_TARGET_AUDIT_RULE = f"{OLDEST_TARGET_EVOINFRA_DIR}/audit-rule.md"
 CODEX_HOOKS_CONFIG = ".codex/hooks.json"
 CODEX_START_HOOK_SCRIPT = f"{TARGET_EVOINFRA_DIR}/hooks/evozeus_wrapper_start_check.py"
 CODEX_START_HOOK_EVENT = "SessionStart"
-CODEX_START_HOOK_MATCHER = "startup|resume|clear|compact"
+CODEX_START_HOOK_MATCHER = "startup|resume"
 TARGET_DASHBOARD_INDEX = f"{TARGET_EVOINFRA_DIR}/docs/index.md"
 TARGET_DASHBOARD_CONFIG = f"{TARGET_EVOINFRA_DIR}/docs/_config.yml"
 TARGET_DESIGN_TEMPLATE = f"{TARGET_EVOINFRA_DIR}/docs/design-doc-template.md"
@@ -693,30 +698,74 @@ def classify_integration_mode(
     hook_files: list[str],
     plugin_manifests: list[str],
     skill_entries: list[dict[str, Any]],
+    skill_entry_preflight_installed: bool = False,
 ) -> dict[str, Any]:
     codex_project_hook = CODEX_HOOKS_CONFIG in hook_files and CODEX_START_HOOK_SCRIPT in hook_files
     plugin_lifecycle_hook = bool(hook_files and plugin_manifests and skill_entries)
-    if codex_project_hook:
-        mode = "native_host_hook"
-        description = "Codex project-local SessionStart hook is registered under .codex/hooks.json."
-    elif plugin_lifecycle_hook:
-        mode = "native_host_hook"
-        description = "Host/plugin lifecycle hooks are present and can load a control Skill."
-    elif plugin_manifests and skill_entries:
+    if plugin_manifests and skill_entries:
         mode = "bootstrap_skill"
-        description = "Plugin skills are present, but no host lifecycle hook files were detected."
+        description = (
+            "Plugin skills are present and may have lifecycle hooks, but no native Skill-invocation "
+            "event is available."
+        )
     elif root_entry:
         mode = "prompt_runtime_check"
-        description = "The instruction surface can require checks, but enforcement depends on prompt compliance."
+        description = (
+            "The instruction surface can require a Skill-entry preflight, but enforcement depends on "
+            "prompt compliance."
+        )
     else:
         mode = "manual_only"
         description = "No runtime instruction surface or host integration was detected."
 
+    capabilities = {
+        "repo_maintenance_hook": {
+            "installed": codex_project_hook,
+            "native_enforced": codex_project_hook,
+            "event": CODEX_START_HOOK_EVENT if codex_project_hook else None,
+            "scope": "canonical_repository",
+            "covers_skill_invocation": False,
+        },
+        "plugin_lifecycle_hook": {
+            "installed": plugin_lifecycle_hook,
+            "native_enforced": plugin_lifecycle_hook,
+            "scope": "plugin_lifecycle",
+            "covers_skill_invocation": False,
+        },
+        "global_session_dispatcher": {
+            "installed": False,
+            "native_enforced": False,
+            "event": CODEX_START_HOOK_EVENT,
+            "scope": "all_registered_wrapped_skills",
+            "covers_skill_invocation": False,
+        },
+        "skill_entry_preflight": {
+            "installed": skill_entry_preflight_installed,
+            "native_enforced": False,
+            "scope": "selected_skill_instruction_surface",
+            "covers_skill_invocation": skill_entry_preflight_installed,
+        },
+        "tool_gateway": {
+            "installed": False,
+            "native_enforced": False,
+            "event": "PreToolUse",
+            "scope": "toolized_execution_path",
+            "covers_skill_invocation": False,
+        },
+        "skill_invocation_hook": {
+            "supported": False,
+            "installed": False,
+            "event": None,
+        },
+    }
+
     return {
         "mode": mode,
-        "native_host_hook_installed": mode == "native_host_hook",
+        "native_skill_invocation_hook_installed": False,
+        "native_host_hook_installed": False,
         "codex_project_hook": codex_project_hook,
         "plugin_lifecycle_hook": plugin_lifecycle_hook,
+        "capabilities": capabilities,
         "manual_wrapper_command": "not_runtime_integration",
         "target_kind": target_kind,
         "root_entry": root_entry,
@@ -830,6 +879,25 @@ def surface_has_status_check(path: Path) -> bool:
     if lines and lines[0].startswith("# "):
         return "\n".join(lines[1:]).lstrip().startswith("## EvoZeus-wrapper 状态检查")
     return False
+
+
+def safe_target_relative_file(target: Path, raw: object) -> Path | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    relative = Path(raw)
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    candidate = target / relative
+    cursor = candidate
+    while cursor != target:
+        if cursor.is_symlink():
+            return None
+        cursor = cursor.parent
+    try:
+        candidate.resolve(strict=True).relative_to(target)
+    except (OSError, ValueError):
+        return None
+    return candidate if candidate.is_file() else None
 
 
 def collect_evolution_surface_facts(target: Path, skill_inventory: list[dict[str, Any]]) -> dict[str, Any]:
@@ -969,13 +1037,32 @@ def detect_target_architecture(target: Path) -> dict[str, Any]:
         architecture_style = "unknown"
 
     root_entry = "SKILL.md" if has_root_skill else "AGENTS.md" if has_agents else None
+    selected_instruction_surface = root_entry
+    current_manifest = target / TARGET_WRAPPER_MANIFEST
+    if current_manifest.is_file():
+        try:
+            manifest_data = json.loads(current_manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest_data = {}
+        manifest_surface = (
+            manifest_data.get("instruction_surface")
+            if isinstance(manifest_data, dict)
+            else None
+        )
+        if safe_target_relative_file(target, manifest_surface) is not None:
+            selected_instruction_surface = manifest_surface
     integration = classify_integration_mode(
         target_kind=target_kind,
         root_entry=root_entry,
         hook_files=hooks,
         plugin_manifests=plugins,
         skill_entries=entries,
+        skill_entry_preflight_installed=(
+            bool(selected_instruction_surface)
+            and surface_has_status_check(target / selected_instruction_surface)
+        ),
     )
+    integration["instruction_surface"] = selected_instruction_surface
     verification_candidates = [
         str(path.relative_to(target))
         for path in sorted((target / "automation").glob("*.py"))
@@ -1013,6 +1100,18 @@ def diagnose_skill(
     target = target.expanduser().resolve()
     skill_md = target / "SKILL.md"
     architecture = detect_target_architecture(target)
+    global_hook_status = read_global_hook_status(home)
+    global_capability = architecture["integration"]["capabilities"][
+        "global_session_dispatcher"
+    ]
+    global_capability.update(
+        {
+            "installed": global_hook_status["status"] == "installed",
+            "native_enforced": global_hook_status["native_enforced"],
+            "trust_status": global_hook_status["trust_status"],
+            "status_source": "user_runtime_diagnosis",
+        }
+    )
     inferred_name = skill_name or skill_name_from_skill_md(skill_md) or target.name
 
     install_paths = [
@@ -1329,9 +1428,11 @@ def build_status_section(replacements: dict[str, str]) -> str:
     return f"""\
 {STATUS_SECTION_HEADING}
 
-执行本 Skill 主链路前，优先完成状态检查。若当前只是 runtime-only install，缺少维护资产时不要把安装副本当作事实源，回 canonical repo 处理 wrapper harness 或 Skill release。
+本段是 Skill 入口 preflight。Agent 选中本 Skill 后、进入业务主链路前执行；它基本绑定当前 Skill，但依赖 instruction compliance，不是 native Skill invocation hook。
 
-本检查的运行时集成等级记录在 `{TARGET_WRAPPER_MANIFEST}` 的 `integration.mode`。只有 `native_host_hook` 表示 Codex project-local hook 或其他宿主/plugin lifecycle hook 会自动触发；`prompt_runtime_check` 只是说明入口要求 agent 执行检查，不是真 hook；`hook start-check` 这类 wrapper CLI 命令只有被宿主自动调用时才算 runtime hook。
+`{TARGET_WRAPPER_MANIFEST}` 分开记录 capability：`repo_maintenance_hook` 只在 canonical repository 作为活动项目时原生触发；`global_session_dispatcher` 在每个任务启动时聚合检查全部 wrapped Skills；本入口仍记录为 `prompt_runtime_check`。当前 Codex 没有 `SkillInvoke` 事件，不得把前两者描述成 per-Skill native invocation hook。
+
+若当前只是 runtime-only install，缺少维护资产时不要把安装副本当作事实源，回 canonical repo 处理 wrapper harness 或 Skill release。
 
 1. Skill release 状态
    - 当前记录版本：`{replacements["CURRENT_VERSION"]}`
@@ -1364,6 +1465,19 @@ def build_wrapper_manifest(
     default_hook_files = []
     if CODEX_HOOKS_CONFIG in managed_files and CODEX_START_HOOK_SCRIPT in managed_files:
         default_hook_files = [CODEX_HOOKS_CONFIG, CODEX_START_HOOK_SCRIPT]
+    effective_integration = integration or classify_integration_mode(
+        target_kind="single_skill",
+        root_entry=instruction_surface or "SKILL.md",
+        hook_files=default_hook_files,
+        plugin_manifests=[],
+        skill_entries=[],
+        skill_entry_preflight_installed=True,
+    )
+    repo_hook_installed = bool(
+        (effective_integration.get("capabilities") or {})
+        .get("repo_maintenance_hook", {})
+        .get("installed")
+    )
     manifest = {
         "wrapper_repo": WRAPPER_REPO,
         "wrapper_version": wrapper_version,
@@ -1383,23 +1497,21 @@ def build_wrapper_manifest(
         ),
         "hook_registration": {
             "codex": {
+                "capability": "repo_maintenance_hook",
                 "config_file": CODEX_HOOKS_CONFIG,
                 "hook_script": CODEX_START_HOOK_SCRIPT,
                 "event": CODEX_START_HOOK_EVENT,
                 "matcher": CODEX_START_HOOK_MATCHER,
+                "scope": "canonical_repository",
+                "covers_skill_invocation": False,
+                "installation_status": "installed" if repo_hook_installed else "not_installed",
+                "trust_status": "pending_review" if repo_hook_installed else "not_installed",
                 "trust_review": "required_by_codex_hooks",
                 "latest_version_env": "EVOZEUS_WRAPPER_LATEST_VERSION",
                 "enforcement_env": "EVOZEUS_WRAPPER_HOOK_ENFORCEMENT",
             },
         },
-        "integration": integration
-        or classify_integration_mode(
-            target_kind="single_skill",
-            root_entry=instruction_surface or "SKILL.md",
-            hook_files=default_hook_files,
-            plugin_manifests=[],
-            skill_entries=[],
-        ),
+        "integration": effective_integration,
     }
     if instruction_surface:
         manifest["instruction_surface"] = instruction_surface
@@ -1489,7 +1601,7 @@ def target_infra_text_files(target: Path) -> list[Path]:
         if root.is_dir():
             files.extend(path for path in sorted(root.rglob(pattern)) if path.is_file())
     wrapper_root = target / TARGET_EVOINFRA_DIR
-    if wrapper_root.is_dir():
+    if wrapper_root.is_dir() and not wrapper_root.is_symlink():
         files.extend(
             path
             for path in sorted(wrapper_root.rglob("*"))
@@ -1833,7 +1945,7 @@ def _legacy_layout_sources(target: Path) -> dict[str, list[Path]]:
 
     for source_dir_rel, destination_dir in LEGACY_LAYOUT_TREE_MAP:
         source_dir = target / source_dir_rel
-        if not source_dir.is_dir():
+        if not source_dir.is_dir() or source_dir.is_symlink():
             continue
         for source in sorted(source_dir.rglob("*")):
             if source.is_file():
@@ -1846,6 +1958,8 @@ def plan_target_layout_migration(
     target: Path,
     latest_version: str | None = None,
     today: date | None = None,
+    *,
+    require_clean_git: bool = False,
 ) -> dict[str, Any]:
     target = target.expanduser().resolve()
     manifest_status = wrapper_manifest_status(target)
@@ -1855,9 +1969,13 @@ def plan_target_layout_migration(
     git_status = run_command(
         ["git", "-C", str(target), "status", "--porcelain", "--untracked-files=normal"]
     )
-    worktree_clean = git_status["returncode"] != 0 or not git_status.get("stdout", "").strip()
-    if not worktree_clean:
+    worktree_status_available = git_status["returncode"] == 0
+    worktree_clean = worktree_status_available and not git_status.get("stdout", "").strip()
+    if worktree_status_available and not worktree_clean:
         conflicts.append("target git worktree is not clean; commit or stash changes before migration")
+    elif require_clean_git and not worktree_status_available:
+        detail = (git_status.get("stderr") or git_status.get("stdout") or "unknown error").strip()
+        conflicts.append(f"target git worktree could not be verified: {detail}")
 
     moves: list[dict[str, str]] = []
     for destination_rel, sources in sorted(_legacy_layout_sources(target).items()):
@@ -1943,6 +2061,56 @@ def plan_target_layout_migration(
     if requires_migration and (target / migration_record).exists():
         conflicts.append(f"migration record already exists: {migration_record}")
 
+    text_rewrite_candidates = [
+        str(path.relative_to(target)) for path in target_infra_text_files(target)
+    ]
+    generated_cache_candidates = [
+        str(path.relative_to(target))
+        for pattern in (
+            ".codex/hooks/__pycache__/evozeus_wrapper_start_check.*.pyc",
+            "scripts/__pycache__/evozeus_wrapper_preflight.*.pyc",
+        )
+        for path in target.glob(pattern)
+        if path.is_file()
+    ]
+    managed_file_refreshes = [
+        CODEX_HOOKS_CONFIG,
+        TARGET_PREFLIGHT_SCRIPT,
+        CODEX_START_HOOK_SCRIPT,
+        TARGET_ONBOARDING_GUIDE,
+        ".github/ISSUE_TEMPLATE/config.yml",
+        ".github/workflows/evozeus-wrapper-preflight.yml",
+    ]
+    if requires_migration:
+        write_candidates = {
+            instruction_surface,
+            TARGET_WRAPPER_MANIFEST,
+            migration_record,
+            *managed_file_refreshes,
+            *text_rewrite_candidates,
+            *generated_cache_candidates,
+            *(
+                item.get(key)
+                for item in moves
+                for key in ("source", "destination")
+                if isinstance(item, dict)
+            ),
+        }
+        for relative in sorted(item for item in write_candidates if isinstance(item, str) and item):
+            relative_path = Path(relative)
+            if relative_path.is_absolute() or ".." in relative_path.parts:
+                conflicts.append(f"migration write path escapes target repository: {relative}")
+                continue
+            cursor = target / relative_path
+            while cursor != target:
+                if cursor.is_symlink():
+                    conflicts.append(
+                        "migration write path contains a symlink: "
+                        + str(cursor.relative_to(target))
+                    )
+                    break
+                cursor = cursor.parent
+
     return {
         "stage": "harness_layout_migration",
         "target": str(target),
@@ -1959,14 +2127,7 @@ def plan_target_layout_migration(
         "version_refresh_required": version_refresh_required,
         "migration_record": migration_record if requires_migration else None,
         "moves": moves,
-        "managed_file_refreshes": [
-            CODEX_HOOKS_CONFIG,
-            TARGET_PREFLIGHT_SCRIPT,
-            CODEX_START_HOOK_SCRIPT,
-            TARGET_ONBOARDING_GUIDE,
-            ".github/ISSUE_TEMPLATE/config.yml",
-            ".github/workflows/evozeus-wrapper-preflight.yml",
-        ],
+        "managed_file_refreshes": managed_file_refreshes,
         "codex_hooks_update": codex_hooks_update,
         "instruction_surface": instruction_surface,
         "preserved_host_entrypoints": [
@@ -1977,6 +2138,14 @@ def plan_target_layout_migration(
         ],
         "conflicts": conflicts,
         "worktree_clean": worktree_clean,
+        "worktree_status_available": worktree_status_available,
+        "worktree_status_error": (
+            None
+            if worktree_status_available
+            else (git_status.get("stderr") or git_status.get("stdout") or "unknown error").strip()
+        ),
+        "text_rewrite_candidates": text_rewrite_candidates,
+        "generated_cache_candidates": generated_cache_candidates,
         "can_apply": requires_migration and not conflicts,
         "rollback": "revert the migration commit; migration must run in a clean target worktree",
     }
@@ -2021,8 +2190,16 @@ def _remove_legacy_wrapper_caches(target: Path) -> list[str]:
     return removed
 
 
-def _refresh_migrated_managed_files(target: Path, wrapper_version: str | None) -> list[str]:
-    wrapper_root = Path(__file__).resolve().parents[1]
+def _refresh_migrated_managed_files(
+    target: Path,
+    wrapper_version: str | None,
+    wrapper_root: Path | None = None,
+) -> list[str]:
+    wrapper_root = (
+        Path(__file__).resolve().parents[1]
+        if wrapper_root is None
+        else wrapper_root.expanduser().resolve()
+    )
     refresh_map = [
         (
             wrapper_root / "scripts" / "evozeus_wrapper_preflight.py",
@@ -2060,9 +2237,17 @@ def migrate_target_layout(
     target: Path,
     latest_version: str | None = None,
     today: date | None = None,
+    *,
+    wrapper_root: Path | None = None,
+    require_clean_git: bool = False,
 ) -> dict[str, Any]:
     target = target.expanduser().resolve()
-    plan = plan_target_layout_migration(target, latest_version, today)
+    plan = plan_target_layout_migration(
+        target,
+        latest_version,
+        today,
+        require_clean_git=require_clean_git,
+    )
     if plan["conflicts"]:
         raise ValueError("cannot migrate wrapper layout:\n- " + "\n- ".join(plan["conflicts"]))
     if not plan["migration_required"]:
@@ -2088,7 +2273,11 @@ def migrate_target_layout(
     if rewrite_dashboard_contact_link(target):
         changed_files.append(".github/ISSUE_TEMPLATE/config.yml")
 
-    refreshed_files = _refresh_migrated_managed_files(target, latest_version or plan["current_version"])
+    refreshed_files = _refresh_migrated_managed_files(
+        target,
+        latest_version or plan["current_version"],
+        wrapper_root,
+    )
     changed_files.extend(refreshed_files)
     actions.extend(f"refresh managed file {path}" for path in refreshed_files)
 
@@ -2312,6 +2501,11 @@ def plan_reinstall(skill_name: str, canonical_path: Path, home: Path, targets: l
         "status": "planned",
         "writes": False,
         "actions": actions,
+        "runtime_skill_installation": {
+            "status": "planned",
+            "target_count": len(actions),
+        },
+        "runtime_hook_installation": read_global_hook_status(home),
     }
 
 
@@ -2389,6 +2583,7 @@ def apply_reinstall(
         for action in report["actions"]:
             if action["result"] == "pending":
                 action["result"] = "not_applied"
+        report["runtime_skill_installation"]["status"] = "blocked"
         report.update({"status": "blocked", "writes": False, "errors": blocked_reasons})
         return report
 
@@ -2443,6 +2638,7 @@ def apply_reinstall(
                 shutil.move(str(undo["archive_path"]), str(path))
         raise
 
+    report["runtime_skill_installation"]["status"] = "applied"
     report.update({"status": "applied", "writes": any(item["result"] != "already_linked" for item in report["actions"]), "errors": []})
     return report
 
@@ -2598,9 +2794,9 @@ def plan_harness_upgrade(
         ),
         "integration": integration,
         "integration_policy": (
-            "native_host_hook means Codex project-local hooks or another host/plugin lifecycle hook is installed; "
-            "bootstrap_skill means plugin skill infrastructure can load a control Skill; prompt_runtime_check is "
-            "prompt-compliance fallback; manual wrapper commands are not runtime hooks"
+            "repo_maintenance_hook covers only the canonical repository; global_session_dispatcher checks all "
+            "registered wrapped Skills at SessionStart; skill_entry_preflight is prompt-compliance fallback; "
+            "none is a native per-Skill invocation hook without a SkillInvoke event"
         ),
         "skill_md_policy": (
             "single Skill targets use SKILL.md; AGENTS.md-root targets use AGENTS.md; hook-controlled bundles use the hook-loaded control Skill"

@@ -43,7 +43,7 @@ Ask the user only when:
    - `skill_bundle`
    - `agents_runtime`
    - `unknown`
-4. Report runtime integration mode from `skill.integration`. Distinguish `native_host_hook`, `bootstrap_skill`, `prompt_runtime_check`, and `manual_only`; do not call wrapper CLI commands runtime hooks.
+4. Report runtime integration mode and each scoped capability from `skill.integration`. Distinguish project maintenance, user-level global dispatch, Skill-entry preflight, tool gateway, and future Skill invocation hooks. Do not call project hooks or wrapper CLI commands native per-Skill invocation hooks.
 5. Report Skill inventory from `skills/*/SKILL.md` when present.
 6. Report `evolution_surface` facts: candidate instruction surfaces, controller files, and evidence boundaries. Do not treat script candidates as final placement.
 7. Use `skills/evolution-surface-diagnosis/SKILL.md` to browse the whole repo and choose the controlling instruction surface.

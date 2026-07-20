@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,8 @@ MANIFEST_PATH = ".evozeus-wrapper/wrapper.json"
 LATEST_VERSION_ENV = "EVOZEUS_WRAPPER_LATEST_VERSION"
 ENFORCEMENT_ENV = "EVOZEUS_WRAPPER_HOOK_ENFORCEMENT"
 LATEST_RELEASE_URL = "https://api.github.com/repos/MetaInFLow/EvoZeus-wrapper/releases/latest"
+GLOBAL_CACHE_PATH = ".evozeus/cache/evozeus-wrapper-latest.json"
+GLOBAL_CACHE_TTL_SECONDS = 3600
 
 
 def repo_root() -> Path:
@@ -30,6 +33,24 @@ def read_json(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def write_latest_cache(home: Path, version: str, checked_at_epoch: int) -> None:
+    path = home / GLOBAL_CACHE_PATH
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_text(
+            json.dumps(
+                {"version": version, "checked_at_epoch": checked_at_epoch},
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    except OSError:
+        pass
 
 
 def version_key(tag: str) -> tuple[int, int, int] | None:
@@ -64,6 +85,8 @@ def resolve_latest_version(
     current: str,
     environment: dict[str, str] | None = None,
     fetcher=None,
+    home: Path | None = None,
+    now_epoch: int | None = None,
 ) -> dict[str, str | None]:
     environment = os.environ if environment is None else environment
     checked_at = datetime.now(timezone.utc).isoformat()
@@ -76,8 +99,27 @@ def resolve_latest_version(
             "url": None,
             "error": None,
         }
+    home = Path.home() if home is None else home.expanduser().resolve()
+    now_epoch = int(time.time()) if now_epoch is None else now_epoch
+    cache = read_json(home / GLOBAL_CACHE_PATH) or {}
+    cached_version = cache.get("version")
+    cached_at = cache.get("checked_at_epoch")
+    if (
+        isinstance(cached_version, str)
+        and version_key(cached_version)
+        and isinstance(cached_at, int)
+        and max(0, now_epoch - cached_at) <= GLOBAL_CACHE_TTL_SECONDS
+    ):
+        return {
+            "version": cached_version,
+            "source": "global_dispatcher_cache",
+            "checked_at": checked_at,
+            "url": None,
+            "error": None,
+        }
     release = (fetcher or fetch_latest_release)()
     if release.get("version"):
+        write_latest_cache(home, release["version"], now_epoch)
         return {
             "version": release["version"],
             "source": "github_latest_release",
@@ -107,7 +149,10 @@ def block(reason: str, next_action: str) -> int:
             "systemMessage": reason,
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
-                "additionalContext": f"EvoZeus-wrapper blocked start. next_action={next_action}",
+                "additionalContext": (
+                    "EvoZeus-wrapper capability=repo_maintenance_hook; "
+                    f"scope=canonical_repository; blocked start; next_action={next_action}"
+                ),
             },
         }
     )
@@ -121,7 +166,9 @@ def allow(level: str, message: str, next_action: str) -> int:
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": (
-                    f"EvoZeus-wrapper hook_start_check level={level}; next_action={next_action}; {message}"
+                    "EvoZeus-wrapper capability=repo_maintenance_hook; "
+                    f"scope=canonical_repository; hook_start_check level={level}; "
+                    f"next_action={next_action}; {message}"
                 ),
             },
         }

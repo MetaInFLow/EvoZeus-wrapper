@@ -267,25 +267,80 @@ def detected_plugin_manifests(target: Path) -> list[str]:
 
 def check_integration_contract(target: Path, manifest: dict | None) -> None:
     integration = (manifest or {}).get("integration") or {}
+    registration = ((manifest or {}).get("hook_registration") or {}).get("codex") or {}
     mode = integration.get("mode")
+    capabilities = integration.get("capabilities") or {}
+    repo_hook = capabilities.get("repo_maintenance_hook") or {}
+    global_dispatcher = capabilities.get("global_session_dispatcher") or {}
+    skill_entry = capabilities.get("skill_entry_preflight") or {}
+    invocation_hook = capabilities.get("skill_invocation_hook") or {}
+
+    if repo_hook.get("covers_skill_invocation"):
+        fail("repo_maintenance_hook cannot claim Skill-invocation coverage")
+    if global_dispatcher.get("covers_skill_invocation"):
+        fail("global_session_dispatcher cannot claim per-Skill invocation coverage")
+    if global_dispatcher.get("installed") or global_dispatcher.get("native_enforced"):
+        fail("portable manifest cannot persist user-level global dispatcher installation state")
+    if global_dispatcher.get("trust_status") not in {None, "not_installed"}:
+        fail("portable manifest cannot persist user-level global dispatcher trust state")
+    if skill_entry.get("native_enforced"):
+        fail("skill_entry_preflight is prompt-compliance based, not native enforcement")
+    if skill_entry.get("installed"):
+        surface_rel = (manifest or {}).get("instruction_surface") or integration.get("root_entry")
+        if not isinstance(surface_rel, str) or not surface_rel:
+            fail("skill_entry_preflight installation requires an instruction_surface")
+        relative_surface = Path(surface_rel)
+        if relative_surface.is_absolute() or ".." in relative_surface.parts:
+            fail("skill_entry_preflight instruction_surface must stay inside target")
+        surface = target / relative_surface
+        cursor = surface
+        while cursor != target:
+            if cursor.is_symlink():
+                fail("skill_entry_preflight instruction_surface cannot use symlink components")
+            cursor = cursor.parent
+        try:
+            surface.resolve(strict=True).relative_to(target.resolve())
+        except (OSError, ValueError):
+            fail("skill_entry_preflight instruction_surface is missing or outside target")
+        if not surface.is_file():
+            fail("skill_entry_preflight instruction_surface is missing")
+        content = content_after_frontmatter(surface.read_text(encoding="utf-8")).lstrip()
+        lines = content.splitlines()
+        if content.startswith("## EvoZeus-wrapper 状态检查"):
+            has_status_prelude = True
+        else:
+            has_status_prelude = bool(
+                lines
+                and lines[0].startswith("# ")
+                and "\n".join(lines[1:]).lstrip().startswith(
+                    "## EvoZeus-wrapper 状态检查"
+                )
+            )
+        if not has_status_prelude:
+            fail("skill_entry_preflight installation requires the status prelude")
+    if registration.get("capability") == "repo_maintenance_hook":
+        if registration.get("scope") != "canonical_repository":
+            fail("repo_maintenance_hook registration scope must be canonical_repository")
+        if registration.get("covers_skill_invocation"):
+            fail("repo_maintenance_hook registration cannot claim Skill-invocation coverage")
+
     if not mode:
         warn("wrapper manifest has no integration.mode; treating runtime checks as prompt/manual fallback")
         return
 
     if mode == "native_host_hook":
-        hooks = detected_hook_files(target)
-        plugins = detected_plugin_manifests(target)
-        codex_project_hook = CODEX_HOOKS_CONFIG in hooks and CODEX_START_HOOK_SCRIPT in hooks
-        plugin_lifecycle_hook = bool(hooks and plugins)
-        if not codex_project_hook and not plugin_lifecycle_hook:
-            fail(
-                "integration.mode is native_host_hook but host hook evidence is missing: "
-                f"hooks={hooks or 'none'}, plugin_manifests={plugins or 'none'}"
-            )
-        ok("integration contract has host hook evidence")
+        if not integration.get("native_skill_invocation_hook_installed"):
+            fail("native Skill-invocation coverage requires explicit invocation-hook evidence")
+        if not invocation_hook.get("supported") or not invocation_hook.get("installed"):
+            fail("native Skill-invocation coverage requires a supported installed SkillInvoke hook")
+        ok("integration contract has native Skill-invocation hook evidence")
         return
 
     if mode in {"bootstrap_skill", "prompt_runtime_check", "manual_only"}:
+        if integration.get("native_skill_invocation_hook_installed"):
+            fail(f"integration.mode={mode} conflicts with native Skill-invocation hook installation")
+        if integration.get("native_host_hook_installed"):
+            fail("deprecated native_host_hook_installed cannot overstate Skill-invocation coverage")
         ok(f"integration contract declares non-native mode: {mode}")
         return
 
@@ -479,8 +534,24 @@ def check_status_prelude(skill_text: str, label: str = "SKILL.md") -> None:
 def root_entry_path(target: Path) -> Path:
     manifest = load_wrapper_manifest(target)
     if manifest and manifest.get("instruction_surface"):
-        manifest_surface = target / manifest["instruction_surface"]
-        if manifest_surface.exists():
+        raw_surface = manifest["instruction_surface"]
+        relative = Path(raw_surface) if isinstance(raw_surface, str) else Path("")
+        if relative.is_absolute() or ".." in relative.parts:
+            fail(f"manifest instruction_surface must stay inside target: {raw_surface}")
+        manifest_surface = target / relative
+        cursor = manifest_surface
+        while cursor != target:
+            if cursor.is_symlink():
+                fail(
+                    "manifest instruction_surface cannot use symlink components: "
+                    f"{raw_surface}"
+                )
+            cursor = cursor.parent
+        try:
+            manifest_surface.resolve(strict=True).relative_to(target.resolve())
+        except (OSError, ValueError):
+            fail(f"manifest instruction_surface is missing or outside target: {raw_surface}")
+        if manifest_surface.is_file():
             return manifest_surface
         fail(f"manifest instruction_surface is missing: {manifest['instruction_surface']}")
     skill = target / "SKILL.md"

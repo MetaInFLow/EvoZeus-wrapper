@@ -39,14 +39,15 @@ title: "{{SKILL_NAME}} 自进化驾驶舱"
 
 `SKILL.md` 的 frontmatter 后第一段必须是 `EvoZeus-wrapper 状态检查`。该状态检查先确认当前 Skill release、wrapper harness version 和 source contract；如果当前只是 runtime-only install，不能把安装副本当作事实源，应回 canonical repo 处理维护问题。
 
-`.evozeus-wrapper/wrapper.json` 的 `integration.mode` 说明当前运行时集成等级：
+`.evozeus-wrapper/wrapper.json` 分开记录 Skill invocation mode 与 capability：
 
-- `native_host_hook`：Codex project-local hook 已注册在 `.codex/hooks.json`，或其他宿主/plugin lifecycle hook 已安装并有证据。
-- `bootstrap_skill`：插件 Skill 基础设施可加载控制 Skill，但没有检测到宿主 lifecycle hook。
-- `prompt_runtime_check`：靠 `SKILL.md` / `AGENTS.md` 说明要求 agent 执行检查，不是真 hook。
+- `repo_maintenance_hook`：project-local `SessionStart`，仅覆盖 canonical repo 维护。
+- `global_session_dispatcher`：user-level `SessionStart`，任务启动时聚合检查全部 wrapped Skills。
+- `skill_entry_preflight`：Agent 选中 Skill 后按 instruction surface 检查，依赖 prompt compliance。
+- `bootstrap_skill`：Plugin lifecycle 可加载控制 Skill，但不会新增 Skill invocation event。
 - `manual_only`：只能手动运行 wrapper 命令。
 
-Codex 会从 trusted `.codex/` layer 发现 project-local hook；新建或变更 hook 后，需要通过 `/hooks` 审核并信任。运行时可用 `EVOZEUS_WRAPPER_LATEST_VERSION=vMAJOR.MINOR.PATCH` 强制检查最新 wrapper 版本；用 `EVOZEUS_WRAPPER_HOOK_ENFORCEMENT=strict` 可以在任何可升级版本存在时阻断 wrapper-managed 执行。
+当前 Codex 没有 `SkillInvoke` 事件。project hook、global dispatcher、Plugin lifecycle 和 Skill 入口 preflight 都不得描述成 native per-Skill invocation hook。新建或变更 hook 后，需要通过 `/hooks` 审核并单独记录 trust 状态。
 
 安装、调用、初始化和子 Skill hook 接入以 `.evozeus-wrapper/wrapper.json` 的 `onboarding` 字段及 [onboarding 指南](onboarding.html) 为准。子 Skill 不继承父级 hook，必须单独接入 wrapper、通过 `/hooks` 信任审核，并完成 structure preflight 和 consumer-project smoke test。
 
