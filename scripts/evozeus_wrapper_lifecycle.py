@@ -119,6 +119,8 @@ VERSION_HEADER_RE = re.compile(r"^##\s+\[?(v\d+\.\d+\.\d+)\]?\b", re.MULTILINE)
 SKILL_STATUS_SECTION = "SKILL.md EvoZeus-wrapper status check section (front matter prelude)"
 SKILL_WRAPPER_SECTION = "SKILL.md EvoZeus-wrapper section or migration note (append only)"
 STATUS_SECTION_HEADING = "## EvoZeus-wrapper 状态检查"
+EVOLUTION_SECTION_HEADING = "## 自进化方法"
+WRAPPER_SECTION_HEADING = "## EvoZeus-wrapper"
 WRAPPER_MIGRATION_README = TARGET_MIGRATIONS_README
 CONTROL_SKILL_NAME_TOKENS = (
     "bootstrap",
@@ -1858,23 +1860,119 @@ def _merge_codex_hooks_config(target: Path) -> tuple[dict[str, Any], str]:
     return existing, "refresh" if wrapper_entry_found else "merge"
 
 
-def _replace_markdown_section(text: str, heading: str, replacement: str) -> str:
-    heading_match = re.search(rf"(?m)^{re.escape(heading)}\s*$", text)
-    if heading_match:
-        next_heading = re.search(r"(?m)^##\s+", text[heading_match.end() :])
-        end = heading_match.end() + next_heading.start() if next_heading else len(text)
-        prefix = text[: heading_match.start()].rstrip()
-        suffix = text[end:].lstrip()
-        return f"{prefix}\n\n{replacement.strip()}\n\n{suffix}".rstrip() + "\n"
+def _frontmatter_end(text: str) -> int:
+    lines = text.splitlines(keepends=True)
+    if not lines or not re.fullmatch(r"---[ \t]*", lines[0].rstrip("\r\n")):
+        return 0
+    offset = len(lines[0])
+    for line in lines[1:]:
+        offset += len(line)
+        if re.fullmatch(r"(?:---|\.\.\.)[ \t]*", line.rstrip("\r\n")):
+            return offset
+    return 0
 
-    insert_at = 0
-    if text.startswith("---\n"):
-        frontmatter_end = text.find("\n---\n", 4)
-        if frontmatter_end >= 0:
-            insert_at = frontmatter_end + len("\n---\n")
-    prefix = text[:insert_at].rstrip()
-    suffix = text[insert_at:].lstrip()
-    return f"{prefix}\n\n{replacement.strip()}\n\n{suffix}".rstrip() + "\n"
+
+def _markdown_headings(text: str) -> list[tuple[int, int, str]]:
+    headings: list[tuple[int, int, str]] = []
+    offset = 0
+    frontmatter_end = _frontmatter_end(text)
+    fence: tuple[str, int] | None = None
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        if offset < frontmatter_end:
+            offset += len(line)
+            continue
+        if fence:
+            fence_char, minimum_length = fence
+            if re.match(
+                rf"^[ ]{{0,3}}{re.escape(fence_char)}{{{minimum_length},}}[ \t]*$",
+                content,
+            ):
+                fence = None
+            offset += len(line)
+            continue
+
+        fence_match = re.match(r"^[ ]{0,3}(`{3,}|~{3,})(.*)$", content)
+        if fence_match:
+            marker = fence_match.group(1)
+            fence = (marker[0], len(marker))
+            offset += len(line)
+            continue
+
+        heading_match = re.match(r"^[ ]{0,3}(#{1,6})(?:[ \t]+|$)(.*)$", content)
+        if heading_match:
+            hashes = heading_match.group(1)
+            body = heading_match.group(2).rstrip(" \t")
+            body = re.sub(r"[ \t]+#+$", "", body).rstrip(" \t")
+            canonical = hashes + (f" {body}" if body else "")
+            headings.append((offset, len(hashes), canonical))
+        offset += len(line)
+    return headings
+
+
+def _markdown_section_span(text: str, heading: str) -> tuple[int, int] | None:
+    level_match = re.match(r"^(#{1,6})[ \t]+", heading)
+    if not level_match:
+        raise ValueError(f"invalid Markdown heading: {heading}")
+    level = len(level_match.group(1))
+    headings = _markdown_headings(text)
+    for index, (start, found_level, canonical) in enumerate(headings):
+        if found_level != level or canonical != heading:
+            continue
+        end = next(
+            (
+                next_start
+                for next_start, next_level, _ in headings[index + 1 :]
+                if next_level <= level
+            ),
+            len(text),
+        )
+        return start, end
+    return None
+
+
+def _read_text_preserving_newlines(path: Path) -> str:
+    with path.open("r", encoding="utf-8", newline="") as stream:
+        return stream.read()
+
+
+def _write_text_preserving_newlines(path: Path, text: str) -> None:
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        stream.write(text)
+
+
+def _replace_markdown_section(text: str, heading: str, replacement: str) -> str:
+    span = _markdown_section_span(text, heading)
+    if span:
+        start, end = span
+        suffix = text[end:]
+        separator = "\n\n" if suffix else "\n"
+        return text[:start] + replacement.strip("\r\n") + separator + suffix
+
+    insert_at = _frontmatter_end(text)
+    prefix = text[:insert_at]
+    suffix = text[insert_at:]
+    separator = "" if not prefix or prefix.endswith("\n\n") else "\n"
+    return prefix + separator + replacement.strip("\r\n") + "\n\n" + suffix
+
+
+def _refresh_owned_markdown_section(
+    text: str,
+    heading: str,
+    latest_wrapper_version: str,
+) -> str:
+    span = _markdown_section_span(text, heading)
+    if not span:
+        return text
+    start, end = span
+    section = text[start:end]
+    section = section.replace("--latest-version <wrapper-version> ", "")
+    section = re.sub(
+        r"(?m)^(Wrapper harness version:[ \t]*)`v\d+\.\d+\.\d+`[ \t]*(?=\r?$)",
+        rf"\g<1>`{latest_wrapper_version}`",
+        section,
+    )
+    return text[:start] + section + text[end:]
 
 
 def _refresh_migration_instruction_surface(
@@ -1882,13 +1980,17 @@ def _refresh_migration_instruction_surface(
     manifest: dict[str, Any],
     current_wrapper_version: str | None,
     latest_wrapper_version: str,
+    *,
+    from_layout: str,
+    to_layout: str,
+    layout_migration_required: bool,
 ) -> tuple[str, bool]:
     architecture = detect_target_architecture(target)
     surface_rel = manifest.get("instruction_surface") or architecture.get("root_entry") or "SKILL.md"
     surface = target / surface_rel
     if not surface.is_file():
         raise ValueError(f"migration instruction surface is missing: {surface_rel}")
-    original = surface.read_text(encoding="utf-8")
+    original = _read_text_preserving_newlines(surface)
     canonical_repo = manifest.get("canonical_repo") or "OWNER/REPO"
     status = build_status_section(
         {
@@ -1898,29 +2000,36 @@ def _refresh_migration_instruction_surface(
         }
     )
     updated = _replace_markdown_section(original, STATUS_SECTION_HEADING, status)
-    updated = updated.replace("--latest-version <wrapper-version> ", "")
-    updated = re.sub(
-        r"(?m)^(Wrapper harness version:\s*)`v\d+\.\d+\.\d+`\s*$",
-        rf"\g<1>`{latest_wrapper_version}`",
-        updated,
-    )
+    for owned_heading in (EVOLUTION_SECTION_HEADING, WRAPPER_SECTION_HEADING):
+        updated = _refresh_owned_markdown_section(
+            updated,
+            owned_heading,
+            latest_wrapper_version,
+        )
+    note_kind = "Migration" if layout_migration_required else "Version Refresh"
     migration_heading = (
-        "## EvoZeus-wrapper Migration Note: "
+        f"## EvoZeus-wrapper {note_kind} Note: "
         f"{current_wrapper_version or 'unknown'} -> {latest_wrapper_version}"
     )
-    if migration_heading not in updated:
+    if not _markdown_section_span(updated, migration_heading):
+        if not updated or updated.endswith("\n\n"):
+            separator = ""
+        elif updated.endswith("\n"):
+            separator = "\n"
+        else:
+            separator = "\n\n"
         updated = (
-            updated.rstrip()
-            + "\n\n"
+            updated
+            + separator
             + migration_heading
             + "\n\n"
             + f"- Wrapper harness: `{current_wrapper_version or 'unknown'} -> {latest_wrapper_version}`\n"
-            + f"- Layout: `scattered-v1 -> consolidated-v2`\n"
+            + f"- Layout: `{from_layout} -> {to_layout}`\n"
             + "- Host hook registration, status prelude, manifest integration, and managed links were refreshed.\n"
             + "- Target business rules were preserved.\n"
         )
     if updated != original:
-        surface.write_text(updated, encoding="utf-8")
+        _write_text_preserving_newlines(surface, updated)
         return surface_rel, True
     return surface_rel, False
 
@@ -2302,10 +2411,13 @@ def migrate_target_layout(
         manifest,
         plan["current_version"],
         installed_version,
+        from_layout=plan["from_layout"],
+        to_layout=plan["to_layout"],
+        layout_migration_required=plan["layout_migration_required"],
     )
     if surface_changed:
         changed_files.append(instruction_surface)
-        actions.append(f"refresh wrapper status and append migration note in {instruction_surface}")
+        actions.append(f"refresh wrapper status and append refresh note in {instruction_surface}")
     refreshed_contract = build_wrapper_manifest(
         repo=manifest.get("canonical_repo") or "OWNER/REPO",
         wrapper_version=installed_version,

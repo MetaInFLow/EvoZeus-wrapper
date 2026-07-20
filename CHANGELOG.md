@@ -6,6 +6,23 @@ All notable changes to EvoZeus-wrapper are recorded here.
 
 - None yet.
 
+## [v0.10.1] - 2026-07-20
+
+### Fixed
+
+- Preserved YAML frontmatter, target-owned H1 headings, introduction prose, CRLF line endings, whitespace, and business content when refreshing or inserting the wrapper status section, including indented ATX headings and fenced code blocks.
+- Scoped legacy command and wrapper-version rewrites to wrapper-owned Markdown sections instead of applying them across target-owned content.
+- Recorded actual layout transitions in instruction-surface notes and labeled consolidated-v2 version-only upgrades as `Version Refresh Note` rather than layout migrations.
+
+### Changed
+
+- Bumped newly generated wrapper harnesses to `v0.10.1`.
+
+### Verification
+
+- `python3 -m pytest -q` (123 passed)
+- `python3 -m py_compile scripts/evozeus_wrapper.py scripts/evozeus_wrapper_bootstrap.py scripts/evozeus_wrapper_global_hook.py scripts/evozeus_wrapper_lifecycle.py scripts/evozeus_wrapper_preflight.py templates/global/evozeus_wrapper_dispatcher.py templates/target/.codex/hooks/evozeus_wrapper_start_check.py`
+
 ## [v0.10.0] - 2026-07-20
 
 ### Added
