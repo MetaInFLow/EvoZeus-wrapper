@@ -696,27 +696,70 @@ def classify_integration_mode(
 ) -> dict[str, Any]:
     codex_project_hook = CODEX_HOOKS_CONFIG in hook_files and CODEX_START_HOOK_SCRIPT in hook_files
     plugin_lifecycle_hook = bool(hook_files and plugin_manifests and skill_entries)
-    if codex_project_hook:
-        mode = "native_host_hook"
-        description = "Codex project-local SessionStart hook is registered under .codex/hooks.json."
-    elif plugin_lifecycle_hook:
-        mode = "native_host_hook"
-        description = "Host/plugin lifecycle hooks are present and can load a control Skill."
-    elif plugin_manifests and skill_entries:
+    if plugin_manifests and skill_entries:
         mode = "bootstrap_skill"
-        description = "Plugin skills are present, but no host lifecycle hook files were detected."
+        description = (
+            "Plugin skills are present and may have lifecycle hooks, but no native Skill-invocation "
+            "event is available."
+        )
     elif root_entry:
         mode = "prompt_runtime_check"
-        description = "The instruction surface can require checks, but enforcement depends on prompt compliance."
+        description = (
+            "The instruction surface can require a Skill-entry preflight, but enforcement depends on "
+            "prompt compliance."
+        )
     else:
         mode = "manual_only"
         description = "No runtime instruction surface or host integration was detected."
 
+    capabilities = {
+        "repo_maintenance_hook": {
+            "installed": codex_project_hook,
+            "native_enforced": codex_project_hook,
+            "event": CODEX_START_HOOK_EVENT if codex_project_hook else None,
+            "scope": "canonical_repository",
+            "covers_skill_invocation": False,
+        },
+        "plugin_lifecycle_hook": {
+            "installed": plugin_lifecycle_hook,
+            "native_enforced": plugin_lifecycle_hook,
+            "scope": "plugin_lifecycle",
+            "covers_skill_invocation": False,
+        },
+        "global_session_dispatcher": {
+            "installed": False,
+            "native_enforced": False,
+            "event": CODEX_START_HOOK_EVENT,
+            "scope": "all_registered_wrapped_skills",
+            "covers_skill_invocation": False,
+        },
+        "skill_entry_preflight": {
+            "installed": bool(root_entry),
+            "native_enforced": False,
+            "scope": "selected_skill_instruction_surface",
+            "covers_skill_invocation": bool(root_entry),
+        },
+        "tool_gateway": {
+            "installed": False,
+            "native_enforced": False,
+            "event": "PreToolUse",
+            "scope": "toolized_execution_path",
+            "covers_skill_invocation": False,
+        },
+        "skill_invocation_hook": {
+            "supported": False,
+            "installed": False,
+            "event": None,
+        },
+    }
+
     return {
         "mode": mode,
-        "native_host_hook_installed": mode == "native_host_hook",
+        "native_skill_invocation_hook_installed": False,
+        "native_host_hook_installed": False,
         "codex_project_hook": codex_project_hook,
         "plugin_lifecycle_hook": plugin_lifecycle_hook,
+        "capabilities": capabilities,
         "manual_wrapper_command": "not_runtime_integration",
         "target_kind": target_kind,
         "root_entry": root_entry,

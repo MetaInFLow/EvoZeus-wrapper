@@ -272,20 +272,32 @@ def check_integration_contract(target: Path, manifest: dict | None) -> None:
         warn("wrapper manifest has no integration.mode; treating runtime checks as prompt/manual fallback")
         return
 
+    capabilities = integration.get("capabilities") or {}
+    repo_hook = capabilities.get("repo_maintenance_hook") or {}
+    global_dispatcher = capabilities.get("global_session_dispatcher") or {}
+    skill_entry = capabilities.get("skill_entry_preflight") or {}
+    invocation_hook = capabilities.get("skill_invocation_hook") or {}
+
+    if repo_hook.get("covers_skill_invocation"):
+        fail("repo_maintenance_hook cannot claim Skill-invocation coverage")
+    if global_dispatcher.get("covers_skill_invocation"):
+        fail("global_session_dispatcher cannot claim per-Skill invocation coverage")
+    if skill_entry.get("native_enforced"):
+        fail("skill_entry_preflight is prompt-compliance based, not native enforcement")
+
     if mode == "native_host_hook":
-        hooks = detected_hook_files(target)
-        plugins = detected_plugin_manifests(target)
-        codex_project_hook = CODEX_HOOKS_CONFIG in hooks and CODEX_START_HOOK_SCRIPT in hooks
-        plugin_lifecycle_hook = bool(hooks and plugins)
-        if not codex_project_hook and not plugin_lifecycle_hook:
-            fail(
-                "integration.mode is native_host_hook but host hook evidence is missing: "
-                f"hooks={hooks or 'none'}, plugin_manifests={plugins or 'none'}"
-            )
-        ok("integration contract has host hook evidence")
+        if not integration.get("native_skill_invocation_hook_installed"):
+            fail("native Skill-invocation coverage requires explicit invocation-hook evidence")
+        if not invocation_hook.get("supported") or not invocation_hook.get("installed"):
+            fail("native Skill-invocation coverage requires a supported installed SkillInvoke hook")
+        ok("integration contract has native Skill-invocation hook evidence")
         return
 
     if mode in {"bootstrap_skill", "prompt_runtime_check", "manual_only"}:
+        if integration.get("native_skill_invocation_hook_installed"):
+            fail(f"integration.mode={mode} conflicts with native Skill-invocation hook installation")
+        if integration.get("native_host_hook_installed"):
+            fail("deprecated native_host_hook_installed cannot overstate Skill-invocation coverage")
         ok(f"integration contract declares non-native mode: {mode}")
         return
 

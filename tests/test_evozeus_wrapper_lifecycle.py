@@ -513,7 +513,7 @@ class LifecycleBasicsTest(unittest.TestCase):
             )
             self.assertFalse(wrapper_manifest_status(target)["migration_required"])
 
-    def test_migrate_layout_produces_complete_native_hook_harness(self):
+    def test_migrate_layout_produces_complete_scoped_hook_harness(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "legacy-skill"
             target.mkdir()
@@ -537,8 +537,11 @@ class LifecycleBasicsTest(unittest.TestCase):
             self.assertIn("v0.9.1", skill_text.split("## Business Logic", 1)[0])
             self.assertNotIn("--latest-version <wrapper-version>", skill_text)
             self.assertIn("v0.6.0 -> v0.9.1", skill_text)
-            self.assertEqual(manifest["integration"]["mode"], "native_host_hook")
-            self.assertTrue(manifest["integration"]["native_host_hook_installed"])
+            self.assertEqual(manifest["integration"]["mode"], "prompt_runtime_check")
+            self.assertFalse(manifest["integration"]["native_skill_invocation_hook_installed"])
+            self.assertTrue(
+                manifest["integration"]["capabilities"]["repo_maintenance_hook"]["installed"]
+            )
             self.assertEqual(manifest["hook_registration"]["codex"]["event"], "SessionStart")
             self.assertIn("SessionStart", hooks["hooks"])
             self.assertIn(
@@ -646,7 +649,10 @@ class LifecycleBasicsTest(unittest.TestCase):
             self.assertTrue(report["writes"])
             self.assertTrue((target / ".codex/hooks.json").is_file())
             self.assertEqual(repaired["wrapper_version"], "v0.9.1")
-            self.assertEqual(repaired["integration"]["mode"], "native_host_hook")
+            self.assertEqual(repaired["integration"]["mode"], "prompt_runtime_check")
+            self.assertTrue(
+                repaired["integration"]["capabilities"]["repo_maintenance_hook"]["installed"]
+            )
             self.assertEqual(repaired["dashboard"]["deployment_mode"], "opt_in_github_pages")
             self.assertTrue(
                 (target / ".evozeus-wrapper/docs/migrations/2026-07-18-v0.9.0-to-v0.9.1.md").is_file()
@@ -733,7 +739,7 @@ class LifecycleBasicsTest(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 check_integration_contract(target, manifest)
 
-    def test_preflight_accepts_native_hook_mode_with_hook_evidence(self):
+    def test_preflight_rejects_plugin_lifecycle_hook_as_native_skill_invocation(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "wrapped-skill"
             target.mkdir()
@@ -743,10 +749,10 @@ class LifecycleBasicsTest(unittest.TestCase):
             (target / "hooks" / "hooks.json").write_text("{}", encoding="utf-8")
             manifest = {"integration": {"mode": "native_host_hook"}}
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 check_integration_contract(target, manifest)
 
-    def test_preflight_accepts_native_codex_project_hook_without_plugin_manifest(self):
+    def test_preflight_rejects_native_codex_project_hook_without_invocation_event(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "wrapped-skill"
             target.mkdir()
@@ -760,7 +766,42 @@ class LifecycleBasicsTest(unittest.TestCase):
             )
             manifest = {"integration": {"mode": "native_host_hook"}}
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_integration_contract(target, manifest)
+
+    def test_project_hook_is_repo_maintenance_not_skill_invocation(self):
+        integration = classify_integration_mode(
+            target_kind="single_skill",
+            root_entry="SKILL.md",
+            hook_files=[".codex/hooks.json", CODEX_START_HOOK_SCRIPT],
+            plugin_manifests=[],
+            skill_entries=[],
+        )
+
+        self.assertEqual(integration["mode"], "prompt_runtime_check")
+        self.assertFalse(integration["native_skill_invocation_hook_installed"])
+        self.assertTrue(integration["capabilities"]["repo_maintenance_hook"]["installed"])
+        self.assertFalse(
+            integration["capabilities"]["repo_maintenance_hook"]["covers_skill_invocation"]
+        )
+
+    def test_preflight_rejects_native_invocation_claim_backed_only_by_project_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "wrapped-skill"
+            target.mkdir()
+            (target / ".codex").mkdir()
+            (target / ".codex" / "hooks.json").write_text('{"hooks":{}}', encoding="utf-8")
+            hook_script = target / CODEX_START_HOOK_SCRIPT
+            hook_script.parent.mkdir(parents=True)
+            hook_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+            manifest = {
+                "integration": {
+                    "mode": "native_host_hook",
+                    "native_host_hook_installed": True,
+                }
+            }
+
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 check_integration_contract(target, manifest)
 
 
@@ -978,8 +1019,11 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
                 "evolution surface diagnosis result",
                 architecture["component_gaps"]["missing_concepts"],
             )
-            self.assertEqual(architecture["integration"]["mode"], "native_host_hook")
-            self.assertTrue(architecture["integration"]["native_host_hook_installed"])
+            self.assertEqual(architecture["integration"]["mode"], "bootstrap_skill")
+            self.assertFalse(architecture["integration"]["native_skill_invocation_hook_installed"])
+            self.assertTrue(
+                architecture["integration"]["capabilities"]["plugin_lifecycle_hook"]["installed"]
+            )
 
     def test_detect_target_architecture_marks_single_skill_as_prompt_runtime_check(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1171,9 +1215,12 @@ class WrapperManifestTest(unittest.TestCase):
             [],
         )
 
-        self.assertEqual(manifest["integration"]["mode"], "native_host_hook")
-        self.assertTrue(manifest["integration"]["native_host_hook_installed"])
+        self.assertEqual(manifest["integration"]["mode"], "prompt_runtime_check")
+        self.assertFalse(manifest["integration"]["native_skill_invocation_hook_installed"])
         self.assertTrue(manifest["integration"]["codex_project_hook"])
+        self.assertTrue(
+            manifest["integration"]["capabilities"]["repo_maintenance_hook"]["installed"]
+        )
         self.assertEqual(manifest["hook_registration"]["codex"]["event"], "SessionStart")
 
     def test_write_wrapper_manifest_skips_existing_without_force(self):
