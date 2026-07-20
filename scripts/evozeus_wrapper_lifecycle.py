@@ -45,7 +45,7 @@ OLDEST_TARGET_AUDIT_RULE = f"{OLDEST_TARGET_EVOINFRA_DIR}/audit-rule.md"
 CODEX_HOOKS_CONFIG = ".codex/hooks.json"
 CODEX_START_HOOK_SCRIPT = f"{TARGET_EVOINFRA_DIR}/hooks/evozeus_wrapper_start_check.py"
 CODEX_START_HOOK_EVENT = "SessionStart"
-CODEX_START_HOOK_MATCHER = "startup|resume|clear|compact"
+CODEX_START_HOOK_MATCHER = "startup|resume"
 TARGET_DASHBOARD_INDEX = f"{TARGET_EVOINFRA_DIR}/docs/index.md"
 TARGET_DASHBOARD_CONFIG = f"{TARGET_EVOINFRA_DIR}/docs/_config.yml"
 TARGET_DESIGN_TEMPLATE = f"{TARGET_EVOINFRA_DIR}/docs/design-doc-template.md"
@@ -1061,6 +1061,18 @@ def diagnose_skill(
     target = target.expanduser().resolve()
     skill_md = target / "SKILL.md"
     architecture = detect_target_architecture(target)
+    global_hook_status = read_global_hook_status(home)
+    global_capability = architecture["integration"]["capabilities"][
+        "global_session_dispatcher"
+    ]
+    global_capability.update(
+        {
+            "installed": global_hook_status["status"] == "installed",
+            "native_enforced": global_hook_status["native_enforced"],
+            "trust_status": global_hook_status["trust_status"],
+            "status_source": "user_runtime_diagnosis",
+        }
+    )
     inferred_name = skill_name or skill_name_from_skill_md(skill_md) or target.name
 
     install_paths = [
@@ -1377,9 +1389,11 @@ def build_status_section(replacements: dict[str, str]) -> str:
     return f"""\
 {STATUS_SECTION_HEADING}
 
-执行本 Skill 主链路前，优先完成状态检查。若当前只是 runtime-only install，缺少维护资产时不要把安装副本当作事实源，回 canonical repo 处理 wrapper harness 或 Skill release。
+本段是 Skill 入口 preflight。Agent 选中本 Skill 后、进入业务主链路前执行；它基本绑定当前 Skill，但依赖 instruction compliance，不是 native Skill invocation hook。
 
-本检查的运行时集成等级记录在 `{TARGET_WRAPPER_MANIFEST}` 的 `integration.mode`。只有 `native_host_hook` 表示 Codex project-local hook 或其他宿主/plugin lifecycle hook 会自动触发；`prompt_runtime_check` 只是说明入口要求 agent 执行检查，不是真 hook；`hook start-check` 这类 wrapper CLI 命令只有被宿主自动调用时才算 runtime hook。
+`{TARGET_WRAPPER_MANIFEST}` 分开记录 capability：`repo_maintenance_hook` 只在 canonical repository 作为活动项目时原生触发；`global_session_dispatcher` 在每个任务启动时聚合检查全部 wrapped Skills；本入口仍记录为 `prompt_runtime_check`。当前 Codex 没有 `SkillInvoke` 事件，不得把前两者描述成 per-Skill native invocation hook。
+
+若当前只是 runtime-only install，缺少维护资产时不要把安装副本当作事实源，回 canonical repo 处理 wrapper harness 或 Skill release。
 
 1. Skill release 状态
    - 当前记录版本：`{replacements["CURRENT_VERSION"]}`
@@ -1412,6 +1426,18 @@ def build_wrapper_manifest(
     default_hook_files = []
     if CODEX_HOOKS_CONFIG in managed_files and CODEX_START_HOOK_SCRIPT in managed_files:
         default_hook_files = [CODEX_HOOKS_CONFIG, CODEX_START_HOOK_SCRIPT]
+    effective_integration = integration or classify_integration_mode(
+        target_kind="single_skill",
+        root_entry=instruction_surface or "SKILL.md",
+        hook_files=default_hook_files,
+        plugin_manifests=[],
+        skill_entries=[],
+    )
+    repo_hook_installed = bool(
+        (effective_integration.get("capabilities") or {})
+        .get("repo_maintenance_hook", {})
+        .get("installed")
+    )
     manifest = {
         "wrapper_repo": WRAPPER_REPO,
         "wrapper_version": wrapper_version,
@@ -1431,23 +1457,21 @@ def build_wrapper_manifest(
         ),
         "hook_registration": {
             "codex": {
+                "capability": "repo_maintenance_hook",
                 "config_file": CODEX_HOOKS_CONFIG,
                 "hook_script": CODEX_START_HOOK_SCRIPT,
                 "event": CODEX_START_HOOK_EVENT,
                 "matcher": CODEX_START_HOOK_MATCHER,
+                "scope": "canonical_repository",
+                "covers_skill_invocation": False,
+                "installation_status": "installed" if repo_hook_installed else "not_installed",
+                "trust_status": "pending_review" if repo_hook_installed else "not_installed",
                 "trust_review": "required_by_codex_hooks",
                 "latest_version_env": "EVOZEUS_WRAPPER_LATEST_VERSION",
                 "enforcement_env": "EVOZEUS_WRAPPER_HOOK_ENFORCEMENT",
             },
         },
-        "integration": integration
-        or classify_integration_mode(
-            target_kind="single_skill",
-            root_entry=instruction_surface or "SKILL.md",
-            hook_files=default_hook_files,
-            plugin_manifests=[],
-            skill_entries=[],
-        ),
+        "integration": effective_integration,
     }
     if instruction_surface:
         manifest["instruction_surface"] = instruction_surface
@@ -2653,9 +2677,9 @@ def plan_harness_upgrade(
         ),
         "integration": integration,
         "integration_policy": (
-            "native_host_hook means Codex project-local hooks or another host/plugin lifecycle hook is installed; "
-            "bootstrap_skill means plugin skill infrastructure can load a control Skill; prompt_runtime_check is "
-            "prompt-compliance fallback; manual wrapper commands are not runtime hooks"
+            "repo_maintenance_hook covers only the canonical repository; global_session_dispatcher checks all "
+            "registered wrapped Skills at SessionStart; skill_entry_preflight is prompt-compliance fallback; "
+            "none is a native per-Skill invocation hook without a SkillInvoke event"
         ),
         "skill_md_policy": (
             "single Skill targets use SKILL.md; AGENTS.md-root targets use AGENTS.md; hook-controlled bundles use the hook-loaded control Skill"

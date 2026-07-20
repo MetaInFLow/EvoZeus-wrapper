@@ -229,7 +229,7 @@ class LifecycleBasicsTest(unittest.TestCase):
         session_start = hooks["hooks"]["SessionStart"][0]
         handler = session_start["hooks"][0]
 
-        self.assertEqual(session_start["matcher"], "startup|resume|clear|compact")
+        self.assertEqual(session_start["matcher"], "startup|resume")
         self.assertEqual(handler["type"], "command")
         self.assertIn(
             "$(git rev-parse --show-toplevel)/.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py",
@@ -370,6 +370,10 @@ class LifecycleBasicsTest(unittest.TestCase):
 
         self.assertIn("harness upgrade-check --target <this-skill-repo> --json", text)
         self.assertNotIn("--latest-version <wrapper-version>", text)
+        self.assertIn("Skill 入口 preflight", text)
+        self.assertIn("repo_maintenance_hook", text)
+        self.assertIn("global_session_dispatcher", text)
+        self.assertIn("SkillInvoke", text)
 
     def test_preflight_root_entry_path_uses_manifest_instruction_surface(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -812,6 +816,21 @@ class LifecycleBasicsTest(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 check_integration_contract(target, manifest)
 
+    def test_preflight_rejects_project_registration_that_claims_invocation_coverage(self):
+        manifest = build_wrapper_manifest(
+            "MetaInFLow/skill",
+            "v0.10.0",
+            [".codex/hooks.json", CODEX_START_HOOK_SCRIPT],
+            [],
+        )
+        manifest["hook_registration"]["codex"]["covers_skill_invocation"] = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "skill"
+            target.mkdir()
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_integration_contract(target, manifest)
+
 
 class EnvironmentDiagnosisTest(unittest.TestCase):
     def test_diagnose_environment_reports_home_and_dependencies(self):
@@ -1079,6 +1098,7 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             skill_dir = target / "skills" / "sales-coach"
             skill_dir.mkdir()
             (skill_dir / "SKILL.md").write_text('---\nname: "sales-coach"\n---\n', encoding="utf-8")
+            apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
 
             def runner(args, cwd=None):
                 if args[:3] == ["gh", "repo", "view"]:
@@ -1113,6 +1133,12 @@ class TargetSkillDiagnosisTest(unittest.TestCase):
             self.assertTrue(report["repo"]["access"]["can_write"])
             self.assertEqual(report["publication"]["visibility"], "PRIVATE")
             self.assertEqual(report["version"]["status"], "missing_version_requires_owner_choice")
+            global_capability = report["skill"]["integration"]["capabilities"][
+                "global_session_dispatcher"
+            ]
+            self.assertTrue(global_capability["installed"])
+            self.assertEqual(global_capability["trust_status"], "pending_review")
+            self.assertFalse(global_capability["native_enforced"])
 
     def test_classify_integration_mode_names_manual_command_as_non_runtime_integration(self):
         integration = classify_integration_mode(
@@ -1230,6 +1256,22 @@ class WrapperManifestTest(unittest.TestCase):
             manifest["integration"]["capabilities"]["repo_maintenance_hook"]["installed"]
         )
         self.assertEqual(manifest["hook_registration"]["codex"]["event"], "SessionStart")
+        self.assertEqual(manifest["hook_registration"]["codex"]["matcher"], "startup|resume")
+        self.assertEqual(
+            manifest["hook_registration"]["codex"]["capability"],
+            "repo_maintenance_hook",
+        )
+        self.assertEqual(
+            manifest["hook_registration"]["codex"]["scope"],
+            "canonical_repository",
+        )
+        self.assertFalse(
+            manifest["hook_registration"]["codex"]["covers_skill_invocation"]
+        )
+        self.assertEqual(
+            manifest["hook_registration"]["codex"]["trust_status"],
+            "pending_review",
+        )
 
     def test_write_wrapper_manifest_skips_existing_without_force(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2155,6 +2197,14 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
             self.assertEqual(advisory.returncode, 0)
             self.assertTrue(advisory_payload["continue"])
             self.assertIn("non-breaking upgrade", advisory_payload["systemMessage"])
+            self.assertIn(
+                "capability=repo_maintenance_hook",
+                advisory_payload["hookSpecificOutput"]["additionalContext"],
+            )
+            self.assertIn(
+                "scope=canonical_repository",
+                advisory_payload["hookSpecificOutput"]["additionalContext"],
+            )
 
             strict_env = {
                 **os.environ,
@@ -2213,6 +2263,33 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
         self.assertIsNone(result["version"])
         self.assertEqual(result["source"], "unavailable")
         self.assertEqual(result["error"], "offline")
+
+    def test_codex_project_hook_reuses_fresh_global_dispatcher_cache(self):
+        template_path = Path("templates/target/.codex/hooks/evozeus_wrapper_start_check.py").resolve()
+        spec = importlib.util.spec_from_file_location("evozeus_wrapper_hook_template_cache", template_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            cache = home / ".evozeus/cache/evozeus-wrapper-latest.json"
+            cache.parent.mkdir(parents=True)
+            cache.write_text(
+                json.dumps({"version": "v0.10.0", "checked_at_epoch": 1000}),
+                encoding="utf-8",
+            )
+
+            result = module.resolve_latest_version(
+                current="v0.9.1",
+                environment={},
+                fetcher=lambda: self.fail("fresh global cache should avoid another remote lookup"),
+                home=home,
+                now_epoch=1100,
+            )
+
+        self.assertEqual(result["version"], "v0.10.0")
+        self.assertEqual(result["source"], "global_dispatcher_cache")
 
 
 if __name__ == "__main__":

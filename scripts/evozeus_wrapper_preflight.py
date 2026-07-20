@@ -267,6 +267,7 @@ def detected_plugin_manifests(target: Path) -> list[str]:
 
 def check_integration_contract(target: Path, manifest: dict | None) -> None:
     integration = (manifest or {}).get("integration") or {}
+    registration = ((manifest or {}).get("hook_registration") or {}).get("codex") or {}
     mode = integration.get("mode")
     if not mode:
         warn("wrapper manifest has no integration.mode; treating runtime checks as prompt/manual fallback")
@@ -284,6 +285,11 @@ def check_integration_contract(target: Path, manifest: dict | None) -> None:
         fail("global_session_dispatcher cannot claim per-Skill invocation coverage")
     if skill_entry.get("native_enforced"):
         fail("skill_entry_preflight is prompt-compliance based, not native enforcement")
+    if registration.get("capability") == "repo_maintenance_hook":
+        if registration.get("scope") != "canonical_repository":
+            fail("repo_maintenance_hook registration scope must be canonical_repository")
+        if registration.get("covers_skill_invocation"):
+            fail("repo_maintenance_hook registration cannot claim Skill-invocation coverage")
 
     if mode == "native_host_hook":
         if not integration.get("native_skill_invocation_hook_installed"):

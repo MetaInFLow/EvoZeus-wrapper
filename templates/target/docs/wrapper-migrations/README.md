@@ -9,7 +9,9 @@
 - `SKILL.md` 的其他 wrapper 内容只能追加 EvoZeus-wrapper 区域或 migration note，不重写目标 Skill 的业务规则。
 - wrapper-managed files 可以按迁移方案复制或合并；如果已有本地修改，必须先做 merge review。
 - Skill release version 和 wrapper harness version 是两条版本轴，不能互相覆盖。
-- `.evozeus-wrapper/wrapper.json` 的 `integration.mode` 必须描述事实。没有 Codex project-local hook 文件，也没有其他宿主/plugin lifecycle hook 证据时，不得记录或宣称 `native_host_hook`。
+- `.evozeus-wrapper/wrapper.json` 必须分开记录 `repo_maintenance_hook`、`global_session_dispatcher`、`skill_entry_preflight`、Plugin/tool gateway 和未来 Skill invocation hook。
+- project-local hook 文件只能证明 canonical repository maintenance coverage，不得证明 consumer workspace 的 native Skill invocation coverage。
+- user-level global dispatcher 的 installed/trust 状态属于本机诊断事实，不写死为可移植 target repo 状态。
 
 ## 每次迁移必须记录
 

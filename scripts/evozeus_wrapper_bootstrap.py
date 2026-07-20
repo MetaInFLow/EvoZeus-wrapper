@@ -254,9 +254,10 @@ Wrapper migration log: `{TARGET_MIGRATIONS_DIR}/`
 
 Runtime integration modes:
 
-- `native_host_hook`：Codex project-local hook 已注册，或其他宿主/plugin lifecycle hook 已安装并有证据。
-- `bootstrap_skill`：插件 Skill 基础设施可加载控制 Skill，但没有检测到宿主 lifecycle hook。
-- `prompt_runtime_check`：说明入口要求 agent 执行检查，依赖 prompt compliance。
+- `repo_maintenance_hook`：project-local `SessionStart` hook，仅覆盖 canonical repository 维护。
+- `global_session_dispatcher`：user-level `SessionStart` 聚合检查全部 wrapped Skills，不是 per-Skill invocation hook。
+- `bootstrap_skill`：Plugin lifecycle 可以稳定加载控制 Skill，但当前没有 `SkillInvoke` 事件。
+- `prompt_runtime_check`：Skill 入口 preflight，基本绑定被选中的 Skill，但依赖 prompt compliance。
 - `manual_only`：只能手动运行 wrapper 命令。
 """
 

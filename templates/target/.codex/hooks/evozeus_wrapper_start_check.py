@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,8 @@ MANIFEST_PATH = ".evozeus-wrapper/wrapper.json"
 LATEST_VERSION_ENV = "EVOZEUS_WRAPPER_LATEST_VERSION"
 ENFORCEMENT_ENV = "EVOZEUS_WRAPPER_HOOK_ENFORCEMENT"
 LATEST_RELEASE_URL = "https://api.github.com/repos/MetaInFLow/EvoZeus-wrapper/releases/latest"
+GLOBAL_CACHE_PATH = ".evozeus/cache/evozeus-wrapper-latest.json"
+GLOBAL_CACHE_TTL_SECONDS = 3600
 
 
 def repo_root() -> Path:
@@ -64,6 +67,8 @@ def resolve_latest_version(
     current: str,
     environment: dict[str, str] | None = None,
     fetcher=None,
+    home: Path | None = None,
+    now_epoch: int | None = None,
 ) -> dict[str, str | None]:
     environment = os.environ if environment is None else environment
     checked_at = datetime.now(timezone.utc).isoformat()
@@ -72,6 +77,24 @@ def resolve_latest_version(
         return {
             "version": explicit,
             "source": "environment",
+            "checked_at": checked_at,
+            "url": None,
+            "error": None,
+        }
+    home = Path.home() if home is None else home.expanduser().resolve()
+    now_epoch = int(time.time()) if now_epoch is None else now_epoch
+    cache = read_json(home / GLOBAL_CACHE_PATH) or {}
+    cached_version = cache.get("version")
+    cached_at = cache.get("checked_at_epoch")
+    if (
+        isinstance(cached_version, str)
+        and version_key(cached_version)
+        and isinstance(cached_at, int)
+        and max(0, now_epoch - cached_at) <= GLOBAL_CACHE_TTL_SECONDS
+    ):
+        return {
+            "version": cached_version,
+            "source": "global_dispatcher_cache",
             "checked_at": checked_at,
             "url": None,
             "error": None,
@@ -107,7 +130,10 @@ def block(reason: str, next_action: str) -> int:
             "systemMessage": reason,
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
-                "additionalContext": f"EvoZeus-wrapper blocked start. next_action={next_action}",
+                "additionalContext": (
+                    "EvoZeus-wrapper capability=repo_maintenance_hook; "
+                    f"scope=canonical_repository; blocked start; next_action={next_action}"
+                ),
             },
         }
     )
@@ -121,7 +147,9 @@ def allow(level: str, message: str, next_action: str) -> int:
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": (
-                    f"EvoZeus-wrapper hook_start_check level={level}; next_action={next_action}; {message}"
+                    "EvoZeus-wrapper capability=repo_maintenance_hook; "
+                    f"scope=canonical_repository; hook_start_check level={level}; "
+                    f"next_action={next_action}; {message}"
                 ),
             },
         }
