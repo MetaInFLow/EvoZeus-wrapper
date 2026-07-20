@@ -1719,6 +1719,167 @@ class GlobalHookLifecycleTest(unittest.TestCase):
             self.assertTrue((home / ".codex/hooks.json").is_file())
 
 
+class GlobalDispatcherTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        template = Path("templates/global/evozeus_wrapper_dispatcher.py").resolve()
+        spec = importlib.util.spec_from_file_location("evozeus_wrapper_global_dispatcher", template)
+        cls.module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(cls.module)
+
+    def create_wrapped_target(self, home: Path, name: str, version: str) -> Path:
+        target = home.parent / f"canonical-{name}"
+        target.mkdir()
+        manifest = target / ".evozeus-wrapper" / "wrapper.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "canonical_repo": f"MetaInFLow/{name}",
+                    "wrapper_version": version,
+                }
+            ),
+            encoding="utf-8",
+        )
+        pointer = home / ".evozeus" / ".projects" / "MetaInFLow" / name
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        pointer.symlink_to(target)
+        return target
+
+    def test_dispatcher_blocks_with_aggregate_count_when_targets_are_stale(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            self.create_wrapped_target(home, "private-skill-a", "v0.9.1")
+            self.create_wrapped_target(home, "private-skill-b", "v0.8.0")
+
+            payload = self.module.evaluate_session_start(
+                home=home,
+                latest_resolver=lambda: {
+                    "version": "v0.10.0",
+                    "source": "test",
+                    "error": None,
+                },
+            )
+            serialized = json.dumps(payload, ensure_ascii=False)
+
+            self.assertFalse(payload["continue"])
+            self.assertIn("2 个 EvoZeus harness 落后", payload["stopReason"])
+            self.assertNotIn("private-skill", serialized)
+            self.assertNotIn(str(home), serialized)
+
+    def test_dispatcher_allows_when_all_targets_are_current(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            self.create_wrapped_target(home, "current-skill", "v0.10.0")
+
+            payload = self.module.evaluate_session_start(
+                home=home,
+                latest_resolver=lambda: {
+                    "version": "v0.10.0",
+                    "source": "test",
+                    "error": None,
+                },
+            )
+
+            self.assertTrue(payload["continue"])
+            self.assertIn("current", payload["systemMessage"])
+
+    def test_dispatcher_uses_cached_latest_when_remote_lookup_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            cache = home / ".evozeus/cache/evozeus-wrapper-latest.json"
+            cache.parent.mkdir(parents=True)
+            cache.write_text(
+                json.dumps({"version": "v0.10.0", "checked_at_epoch": 1000}),
+                encoding="utf-8",
+            )
+
+            resolution = self.module.resolve_latest_version(
+                home=home,
+                now_epoch=5000,
+                environment={},
+                fetcher=lambda: {"version": None, "url": None, "error": "offline"},
+            )
+
+            self.assertEqual(resolution["version"], "v0.10.0")
+            self.assertEqual(resolution["source"], "stale_cache")
+
+    def test_dispatcher_warns_and_allows_when_latest_is_unknown_without_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            self.create_wrapped_target(home, "offline-skill", "v0.9.1")
+
+            payload = self.module.evaluate_session_start(
+                home=home,
+                latest_resolver=lambda: {
+                    "version": None,
+                    "source": "unavailable",
+                    "error": "offline",
+                },
+            )
+
+            self.assertTrue(payload["continue"])
+            self.assertIn("unavailable", payload["systemMessage"])
+
+    def test_dispatcher_blocks_deterministic_manifest_mismatch_without_private_details(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            target = self.create_wrapped_target(home, "mismatch-skill", "v0.10.0")
+            manifest = target / ".evozeus-wrapper/wrapper.json"
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            data["canonical_repo"] = "MetaInFLow/something-else"
+            manifest.write_text(json.dumps(data), encoding="utf-8")
+
+            payload = self.module.evaluate_session_start(
+                home=home,
+                latest_resolver=lambda: {
+                    "version": "v0.10.0",
+                    "source": "test",
+                    "error": None,
+                },
+            )
+            serialized = json.dumps(payload, ensure_ascii=False)
+
+            self.assertFalse(payload["continue"])
+            self.assertIn("本地 harness 注册异常", payload["stopReason"])
+            self.assertNotIn("mismatch-skill", serialized)
+
+    def test_installed_dispatcher_runs_from_consumer_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            consumer = Path(tmp) / "consumer-workspace"
+            consumer.mkdir()
+            self.create_wrapped_target(home, "consumer-skill", "v0.9.1")
+            apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+            dispatcher = home / ".evozeus/hooks/evozeus_wrapper_dispatcher.py"
+
+            result = subprocess.run(
+                [sys.executable, str(dispatcher)],
+                input=json.dumps(
+                    {
+                        "hook_event_name": "SessionStart",
+                        "source": "startup",
+                        "cwd": str(consumer),
+                    }
+                ),
+                text=True,
+                capture_output=True,
+                cwd=consumer,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "EVOZEUS_WRAPPER_LATEST_VERSION": "v0.10.0",
+                },
+                check=False,
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(payload["continue"])
+            self.assertIn("1 个 EvoZeus harness 落后", payload["stopReason"])
+
+
 class EvolutionAndUpgradePlanningTest(unittest.TestCase):
     def test_classify_pr_permission(self):
         self.assertEqual(classify_pr_permission(write=True, fork=True), "direct_pr")
