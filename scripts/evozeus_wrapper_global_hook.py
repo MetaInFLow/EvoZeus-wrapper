@@ -17,6 +17,12 @@ GLOBAL_HOOKS_CONFIG = Path(".codex/hooks.json")
 GLOBAL_DISPATCHER = Path(".evozeus/hooks/evozeus_wrapper_dispatcher.py")
 GLOBAL_HOOK_STATE = Path(".evozeus/hooks/state.json")
 GLOBAL_HOOK_BACKUPS = Path(".evozeus/backups/global-hooks")
+HARNESS_UPGRADE_BACKUPS = Path(".evozeus/backups/harness-upgrades")
+TARGET_MANIFEST = Path(".evozeus-wrapper/wrapper.json")
+LEGACY_TARGET_MANIFESTS = (
+    Path(".evozeus_evoinfra/wrapper.json"),
+    Path(".evozeus/wrapper.json"),
+)
 
 
 def _utc_transaction_id() -> str:
@@ -121,6 +127,13 @@ def _latest_changelog_version(wrapper_root: Path) -> str | None:
         return None
     match = re.search(r"(?m)^## \[(v\d+\.\d+\.\d+)\]", path.read_text(encoding="utf-8"))
     return match.group(1) if match else None
+
+
+def _version_key(tag: str) -> tuple[int, int, int] | None:
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
 
 
 def _state_payload(wrapper_root: Path) -> dict[str, Any]:
@@ -367,4 +380,266 @@ def record_global_hook_trust(home: Path, *, status: str, approve: bool = False) 
         "writes": True,
         "trust_status": status,
         "errors": [],
+    }
+
+
+def _lifecycle_module():
+    try:
+        from . import evozeus_wrapper_lifecycle as lifecycle
+    except ImportError:
+        import evozeus_wrapper_lifecycle as lifecycle
+    return lifecycle
+
+
+def _registered_upgrade_targets(home: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    projects_root = home.expanduser().resolve() / ".evozeus/.projects"
+    targets: list[dict[str, Any]] = []
+    errors: list[str] = []
+    if not projects_root.is_dir():
+        return targets, errors
+    for owner_dir in sorted(projects_root.iterdir()):
+        if not owner_dir.is_dir():
+            continue
+        for pointer in sorted(owner_dir.iterdir()):
+            if not pointer.exists():
+                errors.append(f"broken project pointer: {owner_dir.name}/{pointer.name}")
+                continue
+            try:
+                canonical = pointer.resolve(strict=True)
+            except OSError:
+                errors.append(f"unresolvable project pointer: {owner_dir.name}/{pointer.name}")
+                continue
+            manifest_path = canonical / TARGET_MANIFEST
+            if not manifest_path.is_file():
+                legacy = next(
+                    (canonical / candidate for candidate in LEGACY_TARGET_MANIFESTS if (canonical / candidate).is_file()),
+                    None,
+                )
+                if legacy is None:
+                    continue
+                manifest_path = legacy
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                errors.append(f"invalid wrapper manifest: {owner_dir.name}/{pointer.name}")
+                continue
+            expected_repo = f"{owner_dir.name}/{pointer.name}"
+            if not isinstance(manifest, dict) or manifest.get("canonical_repo") != expected_repo:
+                errors.append(f"canonical repo mismatch: {expected_repo}")
+                continue
+            version = manifest.get("wrapper_version")
+            if not isinstance(version, str) or _version_key(version) is None:
+                errors.append(f"invalid wrapper version: {expected_repo}")
+                continue
+            targets.append(
+                {
+                    "repo": expected_repo,
+                    "target": canonical,
+                    "manifest_path": manifest_path,
+                    "wrapper_version": version,
+                }
+            )
+    return targets, errors
+
+
+def plan_upgrade_all(home: Path, wrapper_root: Path, latest_version: str) -> dict[str, Any]:
+    home = home.expanduser().resolve()
+    wrapper_root = wrapper_root.expanduser().resolve()
+    latest_key = _version_key(latest_version)
+    if latest_key is None:
+        return {
+            "stage": "harness_upgrade_all",
+            "status": "blocked",
+            "writes": False,
+            "errors": ["latest version must use vMAJOR.MINOR.PATCH"],
+            "targets": [],
+        }
+    source_version = _latest_changelog_version(wrapper_root)
+    if source_version != latest_version:
+        return {
+            "stage": "harness_upgrade_all",
+            "status": "blocked",
+            "writes": False,
+            "errors": [
+                f"wrapper source must be updated to {latest_version} before target migrations; current={source_version}"
+            ],
+            "targets": [],
+        }
+
+    registered, discovery_errors = _registered_upgrade_targets(home)
+    outdated = [
+        target
+        for target in registered
+        if _version_key(target["wrapper_version"]) < latest_key
+    ]
+    if discovery_errors:
+        return {
+            "stage": "harness_upgrade_all",
+            "status": "blocked",
+            "writes": False,
+            "errors": discovery_errors,
+            "targets": [],
+        }
+    if not outdated:
+        return {
+            "stage": "harness_upgrade_all",
+            "status": "up_to_date",
+            "writes": False,
+            "errors": [],
+            "latest_version": latest_version,
+            "targets": [],
+        }
+
+    lifecycle = _lifecycle_module()
+    target_plans: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for target in outdated:
+        migration = lifecycle.plan_target_layout_migration(target["target"], latest_version)
+        target_plans.append({**target, "migration": migration})
+        if migration.get("conflicts"):
+            errors.extend(f"{target['repo']}: {item}" for item in migration["conflicts"])
+        elif not migration.get("can_apply"):
+            errors.append(f"{target['repo']}: migration plan is not applicable")
+    return {
+        "stage": "harness_upgrade_all",
+        "status": "blocked" if errors else "planned",
+        "writes": False,
+        "errors": errors,
+        "latest_version": latest_version,
+        "target_count": len(target_plans),
+        "targets": target_plans,
+    }
+
+
+def _snapshot_candidate_paths(target: Path, migration: dict[str, Any]) -> set[Path]:
+    paths = {
+        target / migration.get("instruction_surface", "SKILL.md"),
+        target / ".codex/hooks.json",
+        target / ".github/ISSUE_TEMPLATE/config.yml",
+        target / ".github/workflows/evozeus-wrapper-preflight.yml",
+        target / migration.get("migration_record", ".evozeus-wrapper/docs/migrations/refresh.md"),
+    }
+    for relative in migration.get("managed_file_refreshes", []):
+        paths.add(target / relative)
+    for move in migration.get("moves", []):
+        paths.add(target / move["source"])
+        paths.add(target / move["destination"])
+    for directory in (".evozeus-wrapper", ".evozeus_evoinfra", ".evozeus"):
+        root = target / directory
+        if root.is_dir():
+            paths.update(path for path in root.rglob("*") if path.is_file() or path.is_symlink())
+    return paths
+
+
+def _snapshot_target(
+    target: Path,
+    migration: dict[str, Any],
+    backup_root: Path,
+) -> dict[str, Any]:
+    candidates = _snapshot_candidate_paths(target, migration)
+    files: dict[str, dict[str, Any]] = {}
+    for path in sorted(candidates):
+        relative = str(path.relative_to(target))
+        exists = path.is_file() or path.is_symlink()
+        item = {"exists": exists, "mode": path.stat().st_mode if exists else None}
+        files[relative] = item
+        if exists:
+            destination = backup_root / "files" / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if path.is_symlink():
+                item["symlink"] = str(path.readlink())
+            else:
+                destination.write_bytes(path.read_bytes())
+    backup_root.mkdir(parents=True, exist_ok=True)
+    (backup_root / "snapshot.json").write_text(
+        json.dumps(files, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return {"target": target, "migration": migration, "backup_root": backup_root, "files": files}
+
+
+def _restore_target(snapshot: dict[str, Any]) -> None:
+    target: Path = snapshot["target"]
+    migration = snapshot["migration"]
+    files: dict[str, dict[str, Any]] = snapshot["files"]
+    current_candidates = _snapshot_candidate_paths(target, migration)
+    for path in sorted(current_candidates, reverse=True):
+        relative = str(path.relative_to(target))
+        if relative not in files or not files[relative]["exists"]:
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+    for relative, item in files.items():
+        path = target / relative
+        if not item["exists"]:
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+        if item.get("symlink") is not None:
+            path.symlink_to(item["symlink"])
+        else:
+            source = snapshot["backup_root"] / "files" / relative
+            path.write_bytes(source.read_bytes())
+            path.chmod(item["mode"])
+    for directory in sorted(
+        (path for path in target.rglob("*") if path.is_dir()),
+        reverse=True,
+    ):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+
+
+def apply_upgrade_all(
+    home: Path,
+    wrapper_root: Path,
+    latest_version: str,
+    *,
+    approve: bool = False,
+) -> dict[str, Any]:
+    plan = plan_upgrade_all(home, wrapper_root, latest_version)
+    if plan["status"] in {"blocked", "up_to_date"}:
+        return plan
+    if not approve:
+        return {**plan, "status": "approval_required"}
+
+    home = home.expanduser().resolve()
+    backup_root = home / HARNESS_UPGRADE_BACKUPS / _utc_transaction_id()
+    snapshots: list[dict[str, Any]] = []
+    for item in plan["targets"]:
+        label = item["repo"].replace("/", "--")
+        snapshots.append(
+            _snapshot_target(
+                item["target"],
+                item["migration"],
+                backup_root / label,
+            )
+        )
+
+    lifecycle = _lifecycle_module()
+    results: list[dict[str, Any]] = []
+    try:
+        for item in plan["targets"]:
+            results.append(lifecycle.migrate_target_layout(item["target"], latest_version))
+    except Exception as exc:
+        for snapshot in reversed(snapshots):
+            _restore_target(snapshot)
+        return {
+            **plan,
+            "status": "rolled_back",
+            "writes": False,
+            "backup": str(backup_root),
+            "errors": [str(exc)],
+            "results": [],
+        }
+    return {
+        **plan,
+        "status": "applied",
+        "writes": True,
+        "backup": str(backup_root),
+        "errors": [],
+        "results": results,
     }

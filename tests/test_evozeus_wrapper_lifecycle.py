@@ -56,6 +56,8 @@ from scripts.evozeus_wrapper_global_hook import (
     apply_global_hook_install,
     apply_global_hook_uninstall,
     plan_global_hook_install,
+    apply_upgrade_all,
+    plan_upgrade_all,
     read_global_hook_status,
     record_global_hook_trust,
 )
@@ -1920,6 +1922,187 @@ class GlobalDispatcherTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(payload["continue"])
             self.assertIn("1 个 EvoZeus harness 落后", payload["stopReason"])
+
+
+class UpgradeAllHarnessTest(unittest.TestCase):
+    def create_wrapper_source(self, root: Path, version: str = "v0.10.0") -> Path:
+        wrapper_root = root / "wrapper-source"
+        wrapper_root.mkdir()
+        (wrapper_root / "CHANGELOG.md").write_text(
+            f"# Changelog\n\n## [{version}] - 2026-07-20\n",
+            encoding="utf-8",
+        )
+        return wrapper_root
+
+    def create_upgrade_target(self, home: Path, name: str, version: str = "v0.9.1") -> Path:
+        target = home.parent / f"canonical-{name}"
+        target.mkdir()
+        (target / "SKILL.md").write_text(f"original {name}\n", encoding="utf-8")
+        manifest = target / ".evozeus-wrapper/wrapper.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "canonical_repo": f"MetaInFLow/{name}",
+                    "wrapper_version": version,
+                    "layout_version": 2,
+                    "instruction_surface": "SKILL.md",
+                }
+            ),
+            encoding="utf-8",
+        )
+        pointer = home / ".evozeus/.projects/MetaInFLow" / name
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        pointer.symlink_to(target)
+        return target.resolve()
+
+    def test_upgrade_all_prevalidates_every_target_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            clean = self.create_upgrade_target(home, "clean")
+            dirty = self.create_upgrade_target(home, "dirty")
+
+            def fake_plan(target, latest_version):
+                conflicts = ["target git worktree is not clean"] if target == dirty else []
+                return {
+                    "target": str(target),
+                    "migration_required": True,
+                    "can_apply": not conflicts,
+                    "conflicts": conflicts,
+                    "instruction_surface": "SKILL.md",
+                    "migration_record": ".evozeus-wrapper/docs/migrations/refresh.md",
+                    "moves": [],
+                    "managed_file_refreshes": [],
+                }
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.plan_target_layout_migration",
+                side_effect=fake_plan,
+            ):
+                report = plan_upgrade_all(home, wrapper_root, "v0.10.0")
+
+            self.assertEqual(report["status"], "blocked")
+            self.assertFalse(report["writes"])
+            self.assertIn("original clean", (clean / "SKILL.md").read_text(encoding="utf-8"))
+            self.assertIn("original dirty", (dirty / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_upgrade_all_rolls_back_every_modified_target_on_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            first = self.create_upgrade_target(home, "first")
+            second = self.create_upgrade_target(home, "second")
+
+            def fake_plan(target, latest_version):
+                return {
+                    "target": str(target),
+                    "migration_required": True,
+                    "can_apply": True,
+                    "conflicts": [],
+                    "instruction_surface": "SKILL.md",
+                    "migration_record": ".evozeus-wrapper/docs/migrations/refresh.md",
+                    "moves": [],
+                    "managed_file_refreshes": [],
+                }
+
+            def fake_migrate(target, latest_version):
+                (target / "SKILL.md").write_text("modified\n", encoding="utf-8")
+                if target == second:
+                    raise ValueError("synthetic migration failure")
+                return {"writes": True, "changed_files": ["SKILL.md"]}
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.plan_target_layout_migration",
+                side_effect=fake_plan,
+            ), patch(
+                "scripts.evozeus_wrapper_lifecycle.migrate_target_layout",
+                side_effect=fake_migrate,
+            ):
+                report = apply_upgrade_all(
+                    home,
+                    wrapper_root,
+                    "v0.10.0",
+                    approve=True,
+                )
+
+            self.assertEqual(report["status"], "rolled_back")
+            self.assertFalse(report["writes"])
+            self.assertEqual((first / "SKILL.md").read_text(encoding="utf-8"), "original first\n")
+            self.assertEqual((second / "SKILL.md").read_text(encoding="utf-8"), "original second\n")
+
+    def test_upgrade_all_is_idempotent_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            target = self.create_upgrade_target(home, "current-after-upgrade")
+
+            def fake_plan(target, latest_version):
+                return {
+                    "target": str(target),
+                    "migration_required": True,
+                    "can_apply": True,
+                    "conflicts": [],
+                    "instruction_surface": "SKILL.md",
+                    "migration_record": ".evozeus-wrapper/docs/migrations/refresh.md",
+                    "moves": [],
+                    "managed_file_refreshes": [],
+                }
+
+            def fake_migrate(target, latest_version):
+                manifest = target / ".evozeus-wrapper/wrapper.json"
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                data["wrapper_version"] = latest_version
+                manifest.write_text(json.dumps(data), encoding="utf-8")
+                return {"writes": True, "changed_files": [".evozeus-wrapper/wrapper.json"]}
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.plan_target_layout_migration",
+                side_effect=fake_plan,
+            ), patch(
+                "scripts.evozeus_wrapper_lifecycle.migrate_target_layout",
+                side_effect=fake_migrate,
+            ):
+                first = apply_upgrade_all(home, wrapper_root, "v0.10.0", approve=True)
+                second = apply_upgrade_all(home, wrapper_root, "v0.10.0", approve=True)
+
+            self.assertEqual(first["status"], "applied")
+            self.assertEqual(second["status"], "up_to_date")
+            manifest = json.loads(
+                (target / ".evozeus-wrapper/wrapper.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["wrapper_version"], "v0.10.0")
+
+    def test_upgrade_all_cli_reports_up_to_date_for_empty_registry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper.py",
+                    "harness",
+                    "upgrade-all",
+                    "--latest-version",
+                    "v0.10.0",
+                    "--wrapper-root",
+                    str(wrapper_root),
+                    "--dry-run",
+                    "--json",
+                ],
+                text=True,
+                capture_output=True,
+                env={**os.environ, "HOME": str(home)},
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["status"], "up_to_date")
 
 
 class EvolutionAndUpgradePlanningTest(unittest.TestCase):

@@ -22,8 +22,10 @@ from evozeus_wrapper_lifecycle import (
     stage_label,
 )
 from evozeus_wrapper_global_hook import (
+    apply_upgrade_all,
     apply_global_hook_install,
     apply_global_hook_uninstall,
+    plan_upgrade_all,
     plan_global_hook_install,
     read_global_hook_status,
     record_global_hook_trust,
@@ -145,6 +147,19 @@ def main() -> int:
     migrate_layout.add_argument("--latest-version", required=True)
     migrate_layout.add_argument("--dry-run", action="store_true")
     migrate_layout.add_argument("--json", action="store_true")
+    upgrade_all = harness_sub.add_parser(
+        "upgrade-all",
+        help="Plan or apply upgrades for every outdated registered wrapped harness.",
+    )
+    upgrade_all.add_argument("--latest-version", required=True)
+    upgrade_all.add_argument(
+        "--wrapper-root",
+        default=str(Path(__file__).resolve().parents[1]),
+        help="Canonical EvoZeus-wrapper source path.",
+    )
+    upgrade_all.add_argument("--dry-run", action="store_true")
+    upgrade_all.add_argument("--approve", action="store_true")
+    upgrade_all.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
     if args.group == "env" and args.command == "diagnose":
@@ -339,6 +354,22 @@ def main() -> int:
             return 1
         print_report(report, args.json, "loop")
         return 0
+    if args.group == "harness" and args.command == "upgrade-all":
+        if args.dry_run:
+            report = plan_upgrade_all(
+                Path.home(),
+                Path(args.wrapper_root),
+                args.latest_version,
+            )
+        else:
+            report = apply_upgrade_all(
+                Path.home(),
+                Path(args.wrapper_root),
+                args.latest_version,
+                approve=args.approve,
+            )
+        print_report(report, args.json, "loop")
+        return 0 if report.get("status") not in {"blocked", "approval_required", "rolled_back"} else 1
 
     parser.error("unsupported command")
     return 2
