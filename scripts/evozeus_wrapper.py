@@ -21,6 +21,13 @@ from evozeus_wrapper_lifecycle import (
     run_command,
     stage_label,
 )
+from evozeus_wrapper_global_hook import (
+    apply_global_hook_install,
+    apply_global_hook_uninstall,
+    plan_global_hook_install,
+    read_global_hook_status,
+    record_global_hook_trust,
+)
 
 
 def print_report(report: dict, as_json: bool, stage: str) -> None:
@@ -77,6 +84,29 @@ def main() -> int:
         help="Override the default ~/.evozeus/archives/runtime-installs archive root.",
     )
     reinstall.add_argument("--json", action="store_true", help="Emit machine-readable JSON only.")
+
+    hook = sub.add_parser("hook", help="Host hook lifecycle commands.")
+    hook_scope = hook.add_subparsers(dest="scope", required=True)
+    global_hook = hook_scope.add_parser("global", help="Manage the user-level EvoZeus dispatcher.")
+    global_hook_sub = global_hook.add_subparsers(dest="command", required=True)
+    global_plan = global_hook_sub.add_parser("plan", help="Plan global dispatcher installation.")
+    global_plan.add_argument("--json", action="store_true")
+    global_install = global_hook_sub.add_parser("install", help="Install the global dispatcher.")
+    global_install.add_argument("--approve", action="store_true")
+    global_install.add_argument("--json", action="store_true")
+    global_status = global_hook_sub.add_parser("status", help="Report global dispatcher state.")
+    global_status.add_argument("--json", action="store_true")
+    global_trust = global_hook_sub.add_parser("trust", help="Record the result of Codex hook review.")
+    global_trust.add_argument(
+        "--status",
+        required=True,
+        choices=["pending_review", "trusted", "rejected"],
+    )
+    global_trust.add_argument("--approve", action="store_true")
+    global_trust.add_argument("--json", action="store_true")
+    global_uninstall = global_hook_sub.add_parser("uninstall", help="Uninstall the global dispatcher.")
+    global_uninstall.add_argument("--approve", action="store_true")
+    global_uninstall.add_argument("--json", action="store_true")
 
     loop = sub.add_parser("loop", help="Continuous evolution loop commands.")
     loop_sub = loop.add_subparsers(dest="command", required=True)
@@ -212,6 +242,24 @@ def main() -> int:
                 }
         print_report(report, args.json, "publish")
         return 0 if report.get("status") in {"planned", "applied"} else 1
+    if args.group == "hook" and args.scope == "global":
+        wrapper_root = Path(__file__).resolve().parents[1]
+        if args.command == "plan":
+            report = plan_global_hook_install(Path.home(), wrapper_root)
+        elif args.command == "install":
+            report = apply_global_hook_install(Path.home(), wrapper_root, approve=args.approve)
+        elif args.command == "status":
+            report = read_global_hook_status(Path.home())
+        elif args.command == "trust":
+            report = record_global_hook_trust(
+                Path.home(),
+                status=args.status,
+                approve=args.approve,
+            )
+        else:
+            report = apply_global_hook_uninstall(Path.home(), approve=args.approve)
+        print_report(report, args.json, "publish")
+        return 0 if report.get("status") not in {"blocked", "approval_required"} else 1
     if args.group == "loop" and args.command == "lesson":
         if not args.dry_run:
             print("lesson submission requires explicit confirmation and is not implemented in this command yet", file=sys.stderr)

@@ -12,6 +12,11 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from .evozeus_wrapper_global_hook import read_global_hook_status
+except ImportError:
+    from evozeus_wrapper_global_hook import read_global_hook_status
+
 
 STAGE_LABELS = {
     "environment": "[1/5] Environment Diagnosis",
@@ -2355,6 +2360,11 @@ def plan_reinstall(skill_name: str, canonical_path: Path, home: Path, targets: l
         "status": "planned",
         "writes": False,
         "actions": actions,
+        "runtime_skill_installation": {
+            "status": "planned",
+            "target_count": len(actions),
+        },
+        "runtime_hook_installation": read_global_hook_status(home),
     }
 
 
@@ -2432,6 +2442,7 @@ def apply_reinstall(
         for action in report["actions"]:
             if action["result"] == "pending":
                 action["result"] = "not_applied"
+        report["runtime_skill_installation"]["status"] = "blocked"
         report.update({"status": "blocked", "writes": False, "errors": blocked_reasons})
         return report
 
@@ -2486,6 +2497,7 @@ def apply_reinstall(
                 shutil.move(str(undo["archive_path"]), str(path))
         raise
 
+    report["runtime_skill_installation"]["status"] = "applied"
     report.update({"status": "applied", "writes": any(item["result"] != "already_linked" for item in report["actions"]), "errors": []})
     return report
 

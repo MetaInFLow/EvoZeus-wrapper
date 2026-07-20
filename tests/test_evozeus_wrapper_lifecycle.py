@@ -51,6 +51,14 @@ from scripts.evozeus_wrapper_lifecycle import (
     write_wrapper_manifest,
     wrapper_manifest_status,
 )
+from scripts.evozeus_wrapper_global_hook import (
+    GLOBAL_DISPATCHER_COMMAND,
+    apply_global_hook_install,
+    apply_global_hook_uninstall,
+    plan_global_hook_install,
+    read_global_hook_status,
+    record_global_hook_trust,
+)
 from scripts.evozeus_wrapper_preflight import (
     check_onboarding_contract,
     check_integration_contract,
@@ -1381,6 +1389,12 @@ class ReinstallPlanningTest(unittest.TestCase):
 
             self.assertEqual(plan["stage"], "publish_reinstall")
             self.assertEqual(plan["actions"][0]["action"], "create_symlink")
+            self.assertEqual(plan["runtime_skill_installation"]["status"], "planned")
+            self.assertEqual(plan["runtime_hook_installation"]["status"], "not_installed")
+            self.assertEqual(
+                plan["runtime_hook_installation"]["scope"],
+                "all_registered_wrapped_skills",
+            )
 
     def test_plan_reinstall_detects_already_linked_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1545,6 +1559,164 @@ class ReinstallPlanningTest(unittest.TestCase):
                 apply_reinstall("skill", without_skill, home, ["codex"])
 
             self.assertFalse(home.exists())
+
+
+class GlobalHookLifecycleTest(unittest.TestCase):
+    def test_global_hook_plan_blocks_invalid_existing_hooks_json_without_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            hooks_path = home / ".codex" / "hooks.json"
+            hooks_path.parent.mkdir(parents=True)
+            hooks_path.write_text("{not-json\n", encoding="utf-8")
+
+            plan = plan_global_hook_install(home=home, wrapper_root=Path.cwd())
+
+            self.assertEqual(plan["status"], "blocked")
+            self.assertFalse(plan["writes"])
+            self.assertTrue(plan["errors"])
+            self.assertEqual(hooks_path.read_text(encoding="utf-8"), "{not-json\n")
+
+    def test_global_hook_install_preserves_unrelated_hooks_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            hooks_path = home / ".codex" / "hooks.json"
+            hooks_path.parent.mkdir(parents=True)
+            unrelated = {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "shell",
+                            "hooks": [{"type": "command", "command": "python3 unrelated.py"}],
+                        }
+                    ]
+                }
+            }
+            hooks_path.write_text(json.dumps(unrelated), encoding="utf-8")
+
+            first = apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+            second = apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+            merged = json.loads(hooks_path.read_text(encoding="utf-8"))
+            session_commands = [
+                handler["command"]
+                for entry in merged["hooks"]["SessionStart"]
+                for handler in entry["hooks"]
+            ]
+
+            self.assertEqual(first["status"], "installed")
+            self.assertEqual(second["status"], "already_installed")
+            self.assertEqual(session_commands.count(GLOBAL_DISPATCHER_COMMAND), 1)
+            self.assertIn("PreToolUse", merged["hooks"])
+            self.assertEqual(read_global_hook_status(home)["trust_status"], "pending_review")
+
+    def test_global_hook_uninstall_removes_only_evozeus_registration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+            hooks_path = home / ".codex" / "hooks.json"
+            hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+            hooks["hooks"]["SessionStart"].append(
+                {
+                    "matcher": "startup",
+                    "hooks": [{"type": "command", "command": "python3 keep.py"}],
+                }
+            )
+            hooks_path.write_text(json.dumps(hooks), encoding="utf-8")
+
+            report = apply_global_hook_uninstall(home=home, approve=True)
+            remaining = json.loads(hooks_path.read_text(encoding="utf-8"))
+            commands = [
+                handler["command"]
+                for entry in remaining["hooks"]["SessionStart"]
+                for handler in entry["hooks"]
+            ]
+
+            self.assertEqual(report["status"], "uninstalled")
+            self.assertNotIn(GLOBAL_DISPATCHER_COMMAND, commands)
+            self.assertIn("python3 keep.py", commands)
+
+    def test_global_hook_install_rolls_back_when_a_write_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            hooks_path = home / ".codex" / "hooks.json"
+            hooks_path.parent.mkdir(parents=True)
+            original_hooks = '{"hooks":{"PreToolUse":[]}}\n'
+            hooks_path.write_text(original_hooks, encoding="utf-8")
+
+            from scripts import evozeus_wrapper_global_hook as global_hook
+
+            original_write = global_hook._atomic_write
+            calls = 0
+
+            def fail_second_write(path, data):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("synthetic write failure")
+                return original_write(path, data)
+
+            with patch(
+                "scripts.evozeus_wrapper_global_hook._atomic_write",
+                side_effect=fail_second_write,
+            ), self.assertRaisesRegex(OSError, "synthetic write failure"):
+                apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+
+            self.assertEqual(hooks_path.read_text(encoding="utf-8"), original_hooks)
+            self.assertFalse((home / ".evozeus/hooks/evozeus_wrapper_dispatcher.py").exists())
+            self.assertFalse((home / ".evozeus/hooks/state.json").exists())
+
+    def test_global_hook_trust_is_recorded_separately_after_explicit_approval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            apply_global_hook_install(home=home, wrapper_root=Path.cwd(), approve=True)
+
+            pending = read_global_hook_status(home)
+            recorded = record_global_hook_trust(home, status="trusted", approve=True)
+            trusted = read_global_hook_status(home)
+
+            self.assertEqual(pending["trust_status"], "pending_review")
+            self.assertEqual(recorded["status"], "trusted")
+            self.assertEqual(trusted["trust_status"], "trusted")
+
+    def test_global_hook_cli_plans_and_installs_with_explicit_approval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            environment = {**os.environ, "HOME": str(home)}
+
+            plan = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper.py",
+                    "hook",
+                    "global",
+                    "plan",
+                    "--json",
+                ],
+                text=True,
+                capture_output=True,
+                env=environment,
+                check=False,
+            )
+            install = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/evozeus_wrapper.py",
+                    "hook",
+                    "global",
+                    "install",
+                    "--approve",
+                    "--json",
+                ],
+                text=True,
+                capture_output=True,
+                env=environment,
+                check=False,
+            )
+
+            self.assertEqual(plan.returncode, 0, plan.stderr)
+            self.assertEqual(json.loads(plan.stdout)["status"], "planned")
+            self.assertEqual(install.returncode, 0, install.stderr)
+            self.assertEqual(json.loads(install.stdout)["status"], "installed")
+            self.assertTrue((home / ".codex/hooks.json").is_file())
 
 
 class EvolutionAndUpgradePlanningTest(unittest.TestCase):
