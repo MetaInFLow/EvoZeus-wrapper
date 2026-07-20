@@ -250,7 +250,7 @@ For wrapper `v0.10.0+`, treat target-local and user-level hooks as separate capa
 - `~/.codex/hooks.json` may separately register the global dispatcher, which aggregates every registered wrapped Skill at task start.
 - Non-managed hooks require Codex review/trust through `/hooks` before they run.
 - Project and global hooks share a successful latest-release cache. Deterministic local errors and known outdated harnesses block; an unknown remote version with no usable cache warns and allows.
-- `upgrade-all` prevalidates every target before writing, backs up the managed surfaces, and rolls all targets back if any apply step fails.
+- `upgrade-all` verifies the authoritative latest version, clean Git state and write access for every target before writing. It backs up the complete migration write set, including target-owned files containing legacy wrapper path references, and rolls all targets back if any apply step fails.
 
 ## GitHub Operations
 

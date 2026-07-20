@@ -269,10 +269,6 @@ def check_integration_contract(target: Path, manifest: dict | None) -> None:
     integration = (manifest or {}).get("integration") or {}
     registration = ((manifest or {}).get("hook_registration") or {}).get("codex") or {}
     mode = integration.get("mode")
-    if not mode:
-        warn("wrapper manifest has no integration.mode; treating runtime checks as prompt/manual fallback")
-        return
-
     capabilities = integration.get("capabilities") or {}
     repo_hook = capabilities.get("repo_maintenance_hook") or {}
     global_dispatcher = capabilities.get("global_session_dispatcher") or {}
@@ -283,13 +279,42 @@ def check_integration_contract(target: Path, manifest: dict | None) -> None:
         fail("repo_maintenance_hook cannot claim Skill-invocation coverage")
     if global_dispatcher.get("covers_skill_invocation"):
         fail("global_session_dispatcher cannot claim per-Skill invocation coverage")
+    if global_dispatcher.get("installed") or global_dispatcher.get("native_enforced"):
+        fail("portable manifest cannot persist user-level global dispatcher installation state")
+    if global_dispatcher.get("trust_status") not in {None, "not_installed"}:
+        fail("portable manifest cannot persist user-level global dispatcher trust state")
     if skill_entry.get("native_enforced"):
         fail("skill_entry_preflight is prompt-compliance based, not native enforcement")
+    if skill_entry.get("installed"):
+        surface_rel = (manifest or {}).get("instruction_surface") or integration.get("root_entry")
+        if not isinstance(surface_rel, str) or not surface_rel:
+            fail("skill_entry_preflight installation requires an instruction_surface")
+        surface = target / surface_rel
+        if not surface.is_file():
+            fail("skill_entry_preflight instruction_surface is missing")
+        content = content_after_frontmatter(surface.read_text(encoding="utf-8")).lstrip()
+        lines = content.splitlines()
+        if content.startswith("## EvoZeus-wrapper 状态检查"):
+            has_status_prelude = True
+        else:
+            has_status_prelude = bool(
+                lines
+                and lines[0].startswith("# ")
+                and "\n".join(lines[1:]).lstrip().startswith(
+                    "## EvoZeus-wrapper 状态检查"
+                )
+            )
+        if not has_status_prelude:
+            fail("skill_entry_preflight installation requires the status prelude")
     if registration.get("capability") == "repo_maintenance_hook":
         if registration.get("scope") != "canonical_repository":
             fail("repo_maintenance_hook registration scope must be canonical_repository")
         if registration.get("covers_skill_invocation"):
             fail("repo_maintenance_hook registration cannot claim Skill-invocation coverage")
+
+    if not mode:
+        warn("wrapper manifest has no integration.mode; treating runtime checks as prompt/manual fallback")
+        return
 
     if mode == "native_host_hook":
         if not integration.get("native_skill_invocation_hook_installed"):

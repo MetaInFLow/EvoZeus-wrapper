@@ -698,6 +698,7 @@ def classify_integration_mode(
     hook_files: list[str],
     plugin_manifests: list[str],
     skill_entries: list[dict[str, Any]],
+    skill_entry_preflight_installed: bool = False,
 ) -> dict[str, Any]:
     codex_project_hook = CODEX_HOOKS_CONFIG in hook_files and CODEX_START_HOOK_SCRIPT in hook_files
     plugin_lifecycle_hook = bool(hook_files and plugin_manifests and skill_entries)
@@ -739,10 +740,10 @@ def classify_integration_mode(
             "covers_skill_invocation": False,
         },
         "skill_entry_preflight": {
-            "installed": bool(root_entry),
+            "installed": skill_entry_preflight_installed,
             "native_enforced": False,
             "scope": "selected_skill_instruction_surface",
-            "covers_skill_invocation": bool(root_entry),
+            "covers_skill_invocation": skill_entry_preflight_installed,
         },
         "tool_gateway": {
             "installed": False,
@@ -1023,6 +1024,9 @@ def detect_target_architecture(target: Path) -> dict[str, Any]:
         hook_files=hooks,
         plugin_manifests=plugins,
         skill_entries=entries,
+        skill_entry_preflight_installed=(
+            bool(root_entry) and surface_has_status_check(target / root_entry)
+        ),
     )
     verification_candidates = [
         str(path.relative_to(target))
@@ -1432,6 +1436,7 @@ def build_wrapper_manifest(
         hook_files=default_hook_files,
         plugin_manifests=[],
         skill_entries=[],
+        skill_entry_preflight_installed=True,
     )
     repo_hook_installed = bool(
         (effective_integration.get("capabilities") or {})
@@ -1918,6 +1923,8 @@ def plan_target_layout_migration(
     target: Path,
     latest_version: str | None = None,
     today: date | None = None,
+    *,
+    require_clean_git: bool = False,
 ) -> dict[str, Any]:
     target = target.expanduser().resolve()
     manifest_status = wrapper_manifest_status(target)
@@ -1927,9 +1934,13 @@ def plan_target_layout_migration(
     git_status = run_command(
         ["git", "-C", str(target), "status", "--porcelain", "--untracked-files=normal"]
     )
-    worktree_clean = git_status["returncode"] != 0 or not git_status.get("stdout", "").strip()
-    if not worktree_clean:
+    worktree_status_available = git_status["returncode"] == 0
+    worktree_clean = worktree_status_available and not git_status.get("stdout", "").strip()
+    if worktree_status_available and not worktree_clean:
         conflicts.append("target git worktree is not clean; commit or stash changes before migration")
+    elif require_clean_git and not worktree_status_available:
+        detail = (git_status.get("stderr") or git_status.get("stdout") or "unknown error").strip()
+        conflicts.append(f"target git worktree could not be verified: {detail}")
 
     moves: list[dict[str, str]] = []
     for destination_rel, sources in sorted(_legacy_layout_sources(target).items()):
@@ -2015,6 +2026,19 @@ def plan_target_layout_migration(
     if requires_migration and (target / migration_record).exists():
         conflicts.append(f"migration record already exists: {migration_record}")
 
+    text_rewrite_candidates = [
+        str(path.relative_to(target)) for path in target_infra_text_files(target)
+    ]
+    generated_cache_candidates = [
+        str(path.relative_to(target))
+        for pattern in (
+            ".codex/hooks/__pycache__/evozeus_wrapper_start_check.*.pyc",
+            "scripts/__pycache__/evozeus_wrapper_preflight.*.pyc",
+        )
+        for path in target.glob(pattern)
+        if path.is_file()
+    ]
+
     return {
         "stage": "harness_layout_migration",
         "target": str(target),
@@ -2049,6 +2073,14 @@ def plan_target_layout_migration(
         ],
         "conflicts": conflicts,
         "worktree_clean": worktree_clean,
+        "worktree_status_available": worktree_status_available,
+        "worktree_status_error": (
+            None
+            if worktree_status_available
+            else (git_status.get("stderr") or git_status.get("stdout") or "unknown error").strip()
+        ),
+        "text_rewrite_candidates": text_rewrite_candidates,
+        "generated_cache_candidates": generated_cache_candidates,
         "can_apply": requires_migration and not conflicts,
         "rollback": "revert the migration commit; migration must run in a clean target worktree",
     }
@@ -2093,8 +2125,16 @@ def _remove_legacy_wrapper_caches(target: Path) -> list[str]:
     return removed
 
 
-def _refresh_migrated_managed_files(target: Path, wrapper_version: str | None) -> list[str]:
-    wrapper_root = Path(__file__).resolve().parents[1]
+def _refresh_migrated_managed_files(
+    target: Path,
+    wrapper_version: str | None,
+    wrapper_root: Path | None = None,
+) -> list[str]:
+    wrapper_root = (
+        Path(__file__).resolve().parents[1]
+        if wrapper_root is None
+        else wrapper_root.expanduser().resolve()
+    )
     refresh_map = [
         (
             wrapper_root / "scripts" / "evozeus_wrapper_preflight.py",
@@ -2132,9 +2172,17 @@ def migrate_target_layout(
     target: Path,
     latest_version: str | None = None,
     today: date | None = None,
+    *,
+    wrapper_root: Path | None = None,
+    require_clean_git: bool = False,
 ) -> dict[str, Any]:
     target = target.expanduser().resolve()
-    plan = plan_target_layout_migration(target, latest_version, today)
+    plan = plan_target_layout_migration(
+        target,
+        latest_version,
+        today,
+        require_clean_git=require_clean_git,
+    )
     if plan["conflicts"]:
         raise ValueError("cannot migrate wrapper layout:\n- " + "\n- ".join(plan["conflicts"]))
     if not plan["migration_required"]:
@@ -2160,7 +2208,11 @@ def migrate_target_layout(
     if rewrite_dashboard_contact_link(target):
         changed_files.append(".github/ISSUE_TEMPLATE/config.yml")
 
-    refreshed_files = _refresh_migrated_managed_files(target, latest_version or plan["current_version"])
+    refreshed_files = _refresh_migrated_managed_files(
+        target,
+        latest_version or plan["current_version"],
+        wrapper_root,
+    )
     changed_files.extend(refreshed_files)
     actions.extend(f"refresh managed file {path}" for path in refreshed_files)
 

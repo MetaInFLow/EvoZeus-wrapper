@@ -134,6 +134,9 @@ def discover_wrapped_targets(home: Path) -> tuple[list[dict[str, Any]], list[str
         if not owner_dir.is_dir():
             continue
         for pointer in sorted(owner_dir.iterdir()):
+            if not pointer.is_symlink():
+                errors.append("invalid_project_pointer_type")
+                continue
             if not pointer.exists():
                 errors.append("broken_project_pointer")
                 continue
@@ -141,6 +144,9 @@ def discover_wrapped_targets(home: Path) -> tuple[list[dict[str, Any]], list[str
                 canonical = pointer.resolve(strict=True)
             except OSError:
                 errors.append("unresolvable_project_pointer")
+                continue
+            if not canonical.is_dir():
+                errors.append("project_pointer_target_not_directory")
                 continue
             manifest_path = next(
                 (canonical / candidate for candidate in MANIFEST_CANDIDATES if (canonical / candidate).is_file()),

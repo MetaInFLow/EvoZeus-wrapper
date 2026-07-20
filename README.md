@@ -173,7 +173,7 @@ python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py release --tag v0.1
 - Workflow：push 和 workflow_dispatch 始终运行 maintainer validation。Pages deployment 只有在仓库变量 `EVOZEUS_PAGES_ENABLED=true` 时运行；否则明确使用 repository-only fallback。
 - Project hook：target `.codex/hooks.json` 只覆盖 canonical repo 维护；adapter 优先复用 global dispatcher 的 latest cache，避免重复联网。
 - Global hook：`~/.codex/hooks.json` 调用 `~/.evozeus/hooks/evozeus_wrapper_dispatcher.py`，在 `SessionStart` 聚合检查全部 registered wrapped Skills。安装和 trust 分开报告，写操作必须显式批准。
-- Upgrade all：发现落后版本后先全量 preflight；任一 target 有 dirty/conflict 时零写入，应用中途失败则恢复 transaction snapshots。
+- Upgrade all：显式版本必须与 dispatcher cache、环境 override 或 GitHub release 的 authoritative latest 一致；全部 target 均需可验证的 clean Git worktree 和写权限。任一 preflight 失败时零写入，应用中途失败则恢复完整 write-set snapshots。
 - Reinstall：先用 `--dry-run` 查看计划；实际执行会创建或修正 symlink。真实目录必须显式增加 `--approve-archive`，原内容移动到 `~/.evozeus/archives/runtime-installs/`，不会删除。
 - Feedback audit：`python3 scripts/evozeus_wrapper.py loop audit --target <repo> --user-input "<input>" --json` 判断用户纠正、不满意或机制缺陷是否应转为 Skill Feedback Issue，并输出脱敏 Issue draft；默认不写 GitHub。
 - Issue：必须符合反馈模板，说明不满意结果、期望结果、复现场景、证据边界和影响程度。

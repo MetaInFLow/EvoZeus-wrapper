@@ -189,8 +189,8 @@ hook global plan
 
 用户回复“升级全部”后执行两阶段事务：
 
-1. **Plan**：发现全部落后 targets，检查 canonical repo、clean worktree、manifest、迁移冲突、GitHub latest release 和写权限；任何 target 不可安全升级时保持零写入。
-2. **Apply**：为所有 target 的 wrapper-managed files 建立 transaction backup，逐个应用最新 harness migration，运行 target preflight；任一步失败时回滚本事务已经修改的 target。
+1. **Plan**：发现全部落后 targets，确认显式版本与 dispatcher cache、环境 override 或 GitHub latest release 一致，并检查 canonical repo、clean Git worktree、manifest、迁移冲突和完整 write set 写权限；任何 target 不可安全升级时保持零写入。
+2. **Apply**：为所有可能被迁移改写、移动或删除的文件建立 transaction backup，包括 target-owned 文件中的 legacy wrapper 路径引用；逐个应用最新 harness migration并运行 target preflight，任一步失败时回滚本事务已经修改的 target。
 3. **Finalize**：全部 target 验证通过后，刷新 global dispatcher/state；不自动提交 target 业务文件。
 
 升级报告可以在用户确认后的本地命令输出中列出 target，但不得进入全局 hook 的自动输出。
@@ -240,7 +240,7 @@ MCP/tool gateway 不是本次默认迁移目标。只有满足以下条件的 Sk
 ### Upgrade All
 
 - 多 target 全部可升级时统一 apply 并验证。
-- 任一 target dirty/conflict 时 plan 零写入。
+- 任一 target 无法验证 clean Git、不可写、dirty 或 conflict 时 plan 零写入。
 - apply 中途失败时恢复所有已修改 target。
 - 升级后再次运行结果幂等。
 

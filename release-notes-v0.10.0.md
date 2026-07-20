@@ -36,7 +36,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade-all --latest-version v0.10.0 
 python3 scripts/evozeus_wrapper.py harness upgrade-all --latest-version v0.10.0 --approve --json
 ```
 
-升级会先预检全部 targets。任何 target dirty、冲突或不可写都会保持零写入；应用中任一步失败会恢复本事务的全部 target snapshots。升级不会自动提交目标 repo 的业务文件。
+升级会先确认显式 latest version 与 dispatcher cache、环境 override 或 GitHub release 一致，再预检全部 targets。任何 target 无法验证 clean Git、dirty、冲突或不可写都会保持零写入；应用中任一步失败会恢复本事务的完整 write-set snapshots。升级不会自动提交目标 repo 的文件。
 
 ## 网络与缓存
 
@@ -51,4 +51,4 @@ python3 scripts/evozeus_wrapper.py harness upgrade-all --latest-version v0.10.0 
 python3 scripts/evozeus_wrapper.py hook global uninstall --approve --json
 ```
 
-global hook lifecycle 会在修改前备份现有配置和 EvoZeus-owned runtime files，并在中途失败时完整恢复。target harness upgrade 只备份和修改 wrapper-managed surfaces，不改写 Skill 业务逻辑。
+global hook lifecycle 会在修改前备份现有配置和 EvoZeus-owned runtime files，并在中途失败时完整恢复。target harness upgrade 会备份所有可能被改写、移动或删除的文件；legacy migration 可能更新 target-owned 文件中的旧 wrapper 路径引用，但不得改变 Skill 业务语义。
