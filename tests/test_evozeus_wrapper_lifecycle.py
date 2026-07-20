@@ -27,6 +27,8 @@ from scripts.evozeus_wrapper_lifecycle import (
     TARGET_ONBOARDING_GUIDE,
     TARGET_PREFLIGHT_SCRIPT,
     TARGET_WRAPPER_MANIFEST,
+    _refresh_migration_instruction_surface,
+    _replace_markdown_section,
     apply_reinstall,
     build_onboarding_contract,
     build_wrapper_manifest,
@@ -157,6 +159,143 @@ def create_complete_legacy_target(target: Path) -> str:
 
 
 class LifecycleBasicsTest(unittest.TestCase):
+    def test_replace_markdown_section_preserves_target_h1_and_suffix_bytes(self):
+        frontmatter = (
+            '---\nname: "example"\ndescription: |\n'
+            "  ## EvoZeus-wrapper 状态检查\n"
+            "  Keep this frontmatter text.\n"
+            "---\n\n"
+        )
+        original = (
+            frontmatter
+            + "## EvoZeus-wrapper 状态检查\n\n"
+            "old wrapper-owned status\n\n"
+            "```text\n"
+            "# Not a structural boundary\n"
+            "```\n\n"
+            "old wrapper-owned status continues\n\n"
+            "  # Target Skill Title\n\n"
+            "Target-owned intro bytes.  \n\n"
+            "## Target Business Section\n\n"
+            "Keep this exactly.\n"
+        )
+        suffix = original[original.index("  # Target Skill Title") :]
+
+        updated = _replace_markdown_section(
+            original,
+            "## EvoZeus-wrapper 状态检查",
+            "## EvoZeus-wrapper 状态检查\n\nnew wrapper-owned status\n",
+        )
+
+        self.assertTrue(updated.endswith(suffix))
+        self.assertTrue(updated.startswith(frontmatter))
+        self.assertIn("new wrapper-owned status", updated)
+        self.assertNotIn("old wrapper-owned status", updated)
+
+    def test_refresh_instruction_surface_preserves_crlf_target_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            skill = target / "SKILL.md"
+            original = (
+                b'---\r\nname: "example"\r\n---\r\n\r\n'
+                b"## EvoZeus-wrapper status\r\n\r\n"
+                b"old wrapper-owned status\r\n\r\n"
+                b"# Target Skill Title\r\n\r\n"
+                b"Target-owned CRLF bytes.  \r\n"
+            )
+            original = original.replace(
+                b"## EvoZeus-wrapper status",
+                "## EvoZeus-wrapper 状态检查".encode("utf-8"),
+            )
+            target_owned = original[original.index(b"# Target Skill Title") :]
+            skill.write_bytes(original)
+
+            _refresh_migration_instruction_surface(
+                target,
+                {
+                    "canonical_repo": "MetaInFLow/example",
+                    "instruction_surface": "SKILL.md",
+                },
+                "v0.10.0",
+                "v0.10.1",
+                from_layout="consolidated-v2",
+                to_layout="consolidated-v2",
+                layout_migration_required=False,
+            )
+
+            self.assertIn(target_owned, skill.read_bytes())
+
+    def test_crlf_instruction_surface_inserts_status_after_frontmatter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            skill = target / "SKILL.md"
+            frontmatter = b'---\r\nname: "example"\r\n---\r\n'
+            target_owned = b"# Target Skill Title\r\n\r\nTarget-owned CRLF bytes.\r\n"
+            skill.write_bytes(frontmatter + target_owned)
+
+            _refresh_migration_instruction_surface(
+                target,
+                {
+                    "canonical_repo": "MetaInFLow/example",
+                    "instruction_surface": "SKILL.md",
+                },
+                "v0.10.0",
+                "v0.10.1",
+                from_layout="consolidated-v2",
+                to_layout="consolidated-v2",
+                layout_migration_required=False,
+            )
+            updated = skill.read_bytes()
+            status = "## EvoZeus-wrapper 状态检查".encode("utf-8")
+
+            self.assertTrue(updated.startswith(frontmatter))
+            self.assertIn(target_owned, updated)
+            self.assertGreater(updated.index(status), len(frontmatter) - 1)
+            self.assertGreater(updated.index(target_owned), updated.index(status))
+
+    def test_version_refresh_note_records_actual_consolidated_layout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            skill = target / "SKILL.md"
+            skill.write_text(
+                '---\nname: "example"\n---\n\n'
+                "## EvoZeus-wrapper 状态检查\n\n"
+                "old wrapper-owned status\n\n"
+                "# Target Skill Title\n\n"
+                "Target-owned intro bytes.  \n"
+                "Wrapper harness version: `v9.9.9`\n"
+                "Keep --latest-version <wrapper-version> in business prose.\n",
+                encoding="utf-8",
+            )
+            target_owned = skill.read_text(encoding="utf-8").split("# Target Skill Title", 1)[1]
+            manifest = {
+                "canonical_repo": "MetaInFLow/example",
+                "instruction_surface": "SKILL.md",
+            }
+
+            surface, changed = _refresh_migration_instruction_surface(
+                target,
+                manifest,
+                "v0.10.0",
+                "v0.10.1",
+                from_layout="consolidated-v2",
+                to_layout="consolidated-v2",
+                layout_migration_required=False,
+            )
+            updated = skill.read_text(encoding="utf-8")
+
+            self.assertTrue(changed)
+            self.assertEqual(surface, "SKILL.md")
+            self.assertIn(
+                "## EvoZeus-wrapper Version Refresh Note: v0.10.0 -> v0.10.1",
+                updated,
+            )
+            self.assertIn("- Layout: `consolidated-v2 -> consolidated-v2`", updated)
+            self.assertNotIn("Migration Note: v0.10.0 -> v0.10.1", updated)
+            self.assertIn("# Target Skill Title" + target_owned, updated)
+            self.assertIn("Wrapper harness version: `v9.9.9`", updated)
+            self.assertIn("Keep --latest-version <wrapper-version> in business prose.", updated)
+
     def test_repo_from_remote_supports_https_and_ssh(self):
         self.assertEqual(repo_from_remote("https://github.com/MetaInFLow/EvoZeus.git"), "MetaInFLow/EvoZeus")
         self.assertEqual(repo_from_remote("git@github.com:MetaInFLow/EvoZeus-wrapper.git"), "MetaInFLow/EvoZeus-wrapper")
@@ -643,6 +782,16 @@ class LifecycleBasicsTest(unittest.TestCase):
             create_complete_legacy_target(target)
             migrate_target_layout(target, latest_version="v0.9.0", today=date(2026, 7, 17))
 
+            skill_path = target / "SKILL.md"
+            skill_path.write_text(
+                skill_path.read_text(encoding="utf-8").replace(
+                    "## Business Logic",
+                    "# Target Skill Title\n\nTarget-owned intro bytes.  \n\n## Business Logic",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+
             (target / ".codex/hooks.json").unlink()
             manifest_path = target / TARGET_WRAPPER_MANIFEST
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -657,6 +806,7 @@ class LifecycleBasicsTest(unittest.TestCase):
             plan = plan_target_layout_migration(target, latest_version="v0.9.1", today=date(2026, 7, 18))
             report = migrate_target_layout(target, latest_version="v0.9.1", today=date(2026, 7, 18))
             repaired = load_wrapper_manifest(target)
+            refreshed_skill = skill_path.read_text(encoding="utf-8")
 
             self.assertTrue(plan["migration_required"])
             self.assertEqual(plan["from_layout"], "consolidated-v2")
@@ -668,6 +818,15 @@ class LifecycleBasicsTest(unittest.TestCase):
                 repaired["integration"]["capabilities"]["repo_maintenance_hook"]["installed"]
             )
             self.assertEqual(repaired["dashboard"]["deployment_mode"], "opt_in_github_pages")
+            self.assertIn(
+                "# Target Skill Title\n\nTarget-owned intro bytes.  \n\n## Business Logic",
+                refreshed_skill,
+            )
+            self.assertIn(
+                "## EvoZeus-wrapper Version Refresh Note: v0.9.0 -> v0.9.1",
+                refreshed_skill,
+            )
+            self.assertIn("- Layout: `consolidated-v2 -> consolidated-v2`", refreshed_skill)
             self.assertTrue(
                 (target / ".evozeus-wrapper/docs/migrations/2026-07-18-v0.9.0-to-v0.9.1.md").is_file()
             )
@@ -2177,6 +2336,10 @@ class UpgradeAllHarnessTest(unittest.TestCase):
     def latest_v010():
         return {"version": "v0.10.0", "source": "test", "error": None}
 
+    @staticmethod
+    def latest_v011():
+        return {"version": "v0.10.1", "source": "test", "error": None}
+
     def create_wrapper_source(self, root: Path, version: str = "v0.10.0") -> Path:
         wrapper_root = root / "wrapper-source"
         wrapper_root.mkdir()
@@ -2401,9 +2564,9 @@ class UpgradeAllHarnessTest(unittest.TestCase):
                 report = apply_upgrade_all(
                     home,
                     Path.cwd(),
-                    "v0.10.0",
+                    "v0.10.1",
                     approve=True,
-                    latest_resolver=self.latest_v010,
+                    latest_resolver=self.latest_v011,
                 )
 
             self.assertEqual(report["status"], "rolled_back")
@@ -2417,6 +2580,73 @@ class UpgradeAllHarnessTest(unittest.TestCase):
                 check=True,
             )
             self.assertEqual(git_status.stdout, "")
+
+    def test_upgrade_all_preserves_h1_instruction_surface_on_version_refresh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            target = root / "canonical-h1"
+            target.mkdir()
+            create_complete_legacy_target(target)
+            migrate_target_layout(
+                target,
+                latest_version="v0.10.0",
+                today=date(2026, 7, 19),
+                wrapper_root=Path.cwd(),
+            )
+            skill = target / "SKILL.md"
+            business_block = (
+                "# Target Skill Title\n\n"
+                "Target-owned intro bytes.  \n\n"
+                "## Business Logic\n\n"
+                "PRESERVE-BUSINESS-BYTES https://example.test/tree/main/docs\n\n"
+            )
+            skill.write_text(
+                skill.read_text(encoding="utf-8").replace(
+                    "## Business Logic\n\n"
+                    "PRESERVE-BUSINESS-BYTES https://example.test/tree/main/docs\n\n",
+                    business_block,
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            pointer = home / ".evozeus/.projects/MetaInFLow/legacy-skill"
+            pointer.parent.mkdir(parents=True)
+            pointer.symlink_to(target)
+            subprocess.run(["git", "init", "-q", str(target)], check=True)
+            subprocess.run(["git", "-C", str(target), "add", "."], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(target),
+                    "-c",
+                    "user.name=EvoZeus Test",
+                    "-c",
+                    "user.email=evozeus@example.invalid",
+                    "commit",
+                    "-qm",
+                    "h1 fixture",
+                ],
+                check=True,
+            )
+
+            report = apply_upgrade_all(
+                home,
+                Path.cwd(),
+                "v0.10.1",
+                approve=True,
+                latest_resolver=self.latest_v011,
+            )
+            updated = skill.read_text(encoding="utf-8")
+
+            self.assertEqual(report["status"], "applied")
+            self.assertIn(business_block, updated)
+            self.assertIn(
+                "## EvoZeus-wrapper Version Refresh Note: v0.10.0 -> v0.10.1",
+                updated,
+            )
+            self.assertIn("- Layout: `consolidated-v2 -> consolidated-v2`", updated)
 
     def test_upgrade_all_is_idempotent_after_success(self):
         with tempfile.TemporaryDirectory() as tmp:
