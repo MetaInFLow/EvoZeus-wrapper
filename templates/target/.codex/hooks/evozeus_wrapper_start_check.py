@@ -35,6 +35,24 @@ def read_json(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def write_latest_cache(home: Path, version: str, checked_at_epoch: int) -> None:
+    path = home / GLOBAL_CACHE_PATH
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_text(
+            json.dumps(
+                {"version": version, "checked_at_epoch": checked_at_epoch},
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    except OSError:
+        pass
+
+
 def version_key(tag: str) -> tuple[int, int, int] | None:
     match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag)
     if not match:
@@ -101,6 +119,7 @@ def resolve_latest_version(
         }
     release = (fetcher or fetch_latest_release)()
     if release.get("version"):
+        write_latest_cache(home, release["version"], now_epoch)
         return {
             "version": release["version"],
             "source": "github_latest_release",

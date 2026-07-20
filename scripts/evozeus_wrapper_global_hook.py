@@ -607,6 +607,7 @@ def apply_upgrade_all(
         return {**plan, "status": "approval_required"}
 
     home = home.expanduser().resolve()
+    refresh_installed_global_hook = read_global_hook_status(home)["status"] == "installed"
     backup_root = home / HARNESS_UPGRADE_BACKUPS / _utc_transaction_id()
     snapshots: list[dict[str, Any]] = []
     for item in plan["targets"]:
@@ -621,9 +622,20 @@ def apply_upgrade_all(
 
     lifecycle = _lifecycle_module()
     results: list[dict[str, Any]] = []
+    global_hook_refresh: dict[str, Any] = {
+        "status": "not_installed",
+        "writes": False,
+    }
     try:
         for item in plan["targets"]:
             results.append(lifecycle.migrate_target_layout(item["target"], latest_version))
+        if refresh_installed_global_hook:
+            global_hook_refresh = apply_global_hook_install(home, wrapper_root, approve=True)
+            if global_hook_refresh["status"] not in {"installed", "already_installed"}:
+                raise RuntimeError(
+                    "global dispatcher refresh failed: "
+                    + "; ".join(global_hook_refresh.get("errors", []))
+                )
     except Exception as exc:
         for snapshot in reversed(snapshots):
             _restore_target(snapshot)
@@ -634,6 +646,7 @@ def apply_upgrade_all(
             "backup": str(backup_root),
             "errors": [str(exc)],
             "results": [],
+            "global_hook_refresh": global_hook_refresh,
         }
     return {
         **plan,
@@ -642,4 +655,5 @@ def apply_upgrade_all(
         "backup": str(backup_root),
         "errors": [],
         "results": results,
+        "global_hook_refresh": global_hook_refresh,
     }

@@ -104,7 +104,7 @@ The diagnosis script reports facts only:
 - target kind: `single_skill`, `runtime_skill_bundle`, `hooked_skill_bundle`, `skill_bundle`, `agents_runtime`, or `unknown`
 - `skills/*/SKILL.md` inventory
 - evolution surface candidates and controller files
-- runtime integration mode: `native_host_hook`, `bootstrap_skill`, `prompt_runtime_check`, or `manual_only`
+- runtime integration mode plus scoped capabilities: `repo_maintenance_hook`, `global_session_dispatcher`, `skill_entry_preflight`, `tool_gateway`, and future `skill_invocation_hook`
 - Codex hook registration evidence from `.codex/hooks.json` and `.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py`
 - wrapper component gaps
 - source contract and runtime install state
@@ -125,7 +125,7 @@ Browse the whole target repo enough to prove what controls agent behavior:
 
 Choose `instruction_surface` only from repo evidence. For hook/plugin-controlled systems, pass the chosen relative path into transform with `--instruction-surface`.
 
-Do not call a wrapper CLI command a runtime hook. `native_host_hook` requires Codex project-local hook files or other host/plugin lifecycle hook evidence. `prompt_runtime_check` is only prompt-compliance fallback.
+Do not call a wrapper CLI command a runtime hook. A Codex project-local hook is only `repo_maintenance_hook` evidence for the canonical repository. It does not prove per-Skill invocation coverage. `prompt_runtime_check` is the Skill-entry fallback until Codex provides a native `SkillInvoke` event.
 
 ### 4. Status Assessment
 
@@ -191,6 +191,16 @@ The generated manifest records onboarding separately from wrapper implementation
 - required initialization must provide both a target-owned command and verification;
 - child Skills do not inherit parent hooks and require a separate wrapper lifecycle, `/hooks` trust review, structure preflight, and consumer-project smoke test.
 
+User-level global enforcement is a separate lifecycle from the portable target harness:
+
+```bash
+python3 scripts/evozeus_wrapper.py hook global plan --json
+python3 scripts/evozeus_wrapper.py hook global install --approve --json
+python3 scripts/evozeus_wrapper.py hook global status --json
+```
+
+After installation, review the new registration with Codex `/hooks`, then record the result with `hook global trust`. Installation and trust must never be reported as the same state.
+
 ### 7. Evolution Loop
 
 Use `skills/evolution-loop/SKILL.md`.
@@ -220,19 +230,27 @@ python3 scripts/evozeus_wrapper.py harness upgrade-check \
 
 python3 scripts/evozeus_wrapper.py harness migrate-layout \
   --target /absolute/path/to/target-skill-or-kit \
-  --latest-version v0.9.1 \
+  --latest-version v0.10.0 \
+  --dry-run \
+  --json
+
+python3 scripts/evozeus_wrapper.py harness upgrade-all \
+  --latest-version v0.10.0 \
   --dry-run \
   --json
 ```
 
 Apply the same `migrate-layout` command without `--dry-run` only after the plan has no conflicts and the user approves it. Migration moves old wrapper files into `.evozeus-wrapper/`, rewrites references, updates the layout v2 manifest, records the migration, and removes only empty legacy wrapper directories. It must not rewrite target Skill business logic.
 
-For wrapper `v0.7.0+`, the target harness must include Codex project-local hook registration:
+For wrapper `v0.10.0+`, treat target-local and user-level hooks as separate capabilities:
 
-- `.codex/hooks.json` registers `SessionStart` for `startup|resume|clear|compact`.
+- `.codex/hooks.json` registers the project-local `SessionStart` adapter for `startup|resume`.
 - `.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py` reads `.evozeus-wrapper/wrapper.json` and emits Codex hook JSON.
+- The project hook reports `capability=repo_maintenance_hook` and `scope=canonical_repository`; it is not a per-Skill invocation hook.
+- `~/.codex/hooks.json` may separately register the global dispatcher, which aggregates every registered wrapped Skill at task start.
 - Non-managed hooks require Codex review/trust through `/hooks` before they run.
-- The hook resolves the authoritative GitHub latest release on each SessionStart. If lookup fails, advisory mode warns and strict mode blocks; it never compares the current version with itself.
+- Project and global hooks share a successful latest-release cache. Deterministic local errors and known outdated harnesses block; an unknown remote version with no usable cache warns and allows.
+- `upgrade-all` prevalidates every target before writing, backs up the managed surfaces, and rolls all targets back if any apply step fails.
 
 ## GitHub Operations
 

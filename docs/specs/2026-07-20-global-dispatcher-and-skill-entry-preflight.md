@@ -58,8 +58,8 @@ Issue #12 拆成两层目标。
         "covers_skill_invocation": false
       },
       "global_session_dispatcher": {
-        "installed": true,
-        "native_enforced": true,
+        "installed": false,
+        "native_enforced": false,
         "event": "SessionStart",
         "scope": "all_registered_wrapped_skills",
         "covers_skill_invocation": false
@@ -79,6 +79,8 @@ Issue #12 拆成两层目标。
   }
 }
 ```
+
+target manifest 是 portable harness 声明，因此其中 `global_session_dispatcher.installed` 不代表某个用户环境。`skill diagnose` 在运行时读取 `~/.evozeus/hooks/state.json` 与 `~/.codex/hooks.json`，再用 live installed/trust 状态覆盖诊断输出；portable manifest 本身保持未安装状态。
 
 兼容规则：
 
@@ -156,10 +158,10 @@ dispatcher 以 `~/.evozeus/.projects/OWNER/REPO` 为 wrapped target 注册事实
 
 canonical repo 内继续保留 project-local `SessionStart` hook，用于仓库维护。
 
-- 全局 dispatcher 根据 hook payload 的当前工作目录判断是否处于某个 canonical repo。
-- 当前 target 已有可信 project hook 时，全局 dispatcher 不重复执行该 target 的 repo-maintenance 检查；它仍聚合检查其他 wrapped targets。
+- 全局 dispatcher 仍聚合检查全部 wrapped targets，不能仅凭当前工作目录或 hook 文件存在就假设 project hook 已获 Codex trust。
+- global/project 两个 adapter 共享 latest release 成功缓存；无论执行顺序如何，一个 `SessionStart` 最多做一次远端查询，后执行者只做本地比较。
 - project hook 只检查当前 canonical repo，不扫描全局 target。
-- manifest 分别记录 global dispatcher 与 project hook 的安装、scope 和 trust 状态。
+- manifest 分别记录 global dispatcher 与 project hook 的安装、scope 和 trust 状态；诊断明确报告两者同时存在，但不把两个 registration 当成两份 invocation coverage。
 
 ## 安装、信任与回滚
 

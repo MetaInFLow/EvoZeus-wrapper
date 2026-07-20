@@ -1,5 +1,7 @@
 # Runtime Integration Modes for Wrapped Skills
 
+> Superseded for current behavior by `2026-07-20-global-dispatcher-and-skill-entry-preflight.md`. This file remains as the historical v0.5-v0.7 design record; project-local hook presence is no longer treated as native Skill-invocation coverage.
+
 ## Related Issue
 
 - MetaInFLow/EvoZeus-wrapper#4

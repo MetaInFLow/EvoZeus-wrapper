@@ -59,9 +59,12 @@ python3 scripts/evozeus_wrapper.py skill diagnose --target /absolute/path/to/my-
 python3 scripts/evozeus_wrapper.py skill transform --mode bootstrap --target /absolute/path/to/my-skill --repo MetaInFLow/my-skill --instruction-surface <relative path> --visibility private --dry-run --json
 python3 scripts/evozeus_wrapper.py publish reinstall --skill-name my-skill --canonical-path /absolute/path/to/my-skill --target codex --dry-run --json
 python3 scripts/evozeus_wrapper.py publish reinstall --skill-name my-skill --canonical-path /absolute/path/to/my-skill --target codex --json
+python3 scripts/evozeus_wrapper.py hook global plan --json
+python3 scripts/evozeus_wrapper.py hook global install --approve --json
+python3 scripts/evozeus_wrapper.py hook global status --json
 python3 scripts/evozeus_wrapper.py harness upgrade-check --target /absolute/path/to/my-skill --json
-python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/my-skill --latest-version v0.9.1 --dry-run --json
-python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/my-skill --latest-version v0.9.1 --json
+python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/path/to/my-skill --latest-version v0.10.0 --dry-run --json
+python3 scripts/evozeus_wrapper.py harness upgrade-all --latest-version v0.10.0 --dry-run --json
 ```
 
 如果 `env diagnose` 返回 `next_action: install_evozeus`，先安装 / 初始化 EvoZeus，不进入目标 repo transform。如果没有给 `Visibility`，Agent 必须先问用户选择 `public` 还是 `private`。如果本地发现多个 repo clone 或多个 real-directory 安装副本，必须先让用户选择 canonical repo 或归档策略。
@@ -80,7 +83,7 @@ python3 scripts/evozeus_wrapper.py harness migrate-layout --target /absolute/pat
 - `component_gaps`：当前 repo 缺少哪些 wrapper 文件、manifest、状态检查和 changelog。
 - `skill_inventory`：发现了哪些 `skills/*/SKILL.md`。
 - `controller_files`：Codex hook / plugin manifest / runtime controller 文件。
-- `integration`：明确当前运行时集成等级。`native_host_hook` 才表示 Codex project-local hook 或宿主级 hook 已安装；`bootstrap_skill` 表示插件 Skill 基础设施可加载控制 Skill；`prompt_runtime_check` 表示只靠说明入口要求 agent 执行检查；`manual_only` 表示只能手动跑 wrapper 命令。
+- `integration`：分别报告 `repo_maintenance_hook`、`global_session_dispatcher`、`skill_entry_preflight`、Plugin/tool gateway 和未来 Skill invocation hook。当前 Codex 没有 `SkillInvoke`，不得把 project/global hook 描述成 native per-Skill invocation hook。
 
 诊断 JSON 是事实输入，不直接承担用户解释。诊断后必须先使用 `skills/evolution-surface-diagnosis/SKILL.md` 浏览整个 repo 并选择 instruction surface，再使用 `skills/status-assessment/SKILL.md` 做状态分析，把事实和判断转成用户可理解的流程进度、阻塞项和下一步命令；通过状态分析后才进入 transform。
 
@@ -163,12 +166,14 @@ python3 .evozeus-wrapper/scripts/evozeus_wrapper_preflight.py release --tag v0.1
 检查规则：
 
 - Doctor：必须能找到 `git`、`gh`，`gh auth status` 必须通过；读取 `.evozeus-wrapper/wrapper.json` 后验证 project pointer、canonical repo origin、GitHub repo 和 runtime install pointer。发现 `.evozeus_evoinfra/` 或旧 `.evozeus/wrapper.json` 时必须先迁移，不能继续 fallback 运行。
-- Structure：目标 repo 必须包含 `.evozeus-wrapper/` canonical harness。说明入口由 manifest 的 `instruction_surface` 或根 `SKILL.md` / `AGENTS.md` 决定；`integration.mode=native_host_hook` 时必须有宿主 hook 证据；`onboarding` 和 `dashboard` deployment contract 必须完整。
+- Structure：目标 repo 必须包含 `.evozeus-wrapper/` canonical harness。说明入口由 manifest 的 `instruction_surface` 或根 `SKILL.md` / `AGENTS.md` 决定；project hook 必须声明 `scope=canonical_repository` 且不得声称 Skill invocation coverage；`onboarding` 和 `dashboard` contract 必须完整。
 - Version：运行 Skill 前必须检查 GitHub latest release；如果远端 release 比本地 `.evozeus-wrapper/CHANGELOG.md` 新，先更新再运行。
 - Existing repo version：已有 repo 不得重置为 `v0.1.0`；先取 GitHub latest release，再取 `.evozeus-wrapper/CHANGELOG.md`，两者都没有时让 owner 选择当前版本。
 - Harness：`harness upgrade-check` 默认从 GitHub latest release 获取权威最新版本；查询失败时返回 `latest_unknown`，不得把当前版本当成最新版本。旧 layout 或残缺的较早 v2 harness 先运行 `harness migrate-layout --dry-run`；迁移会安全合并 Codex hooks、刷新状态段和 manifest、追加 migration note，并在 structure post-validation 通过后才报告成功。
 - Workflow：push 和 workflow_dispatch 始终运行 maintainer validation。Pages deployment 只有在仓库变量 `EVOZEUS_PAGES_ENABLED=true` 时运行；否则明确使用 repository-only fallback。
-- Start hook：`.codex/hooks.json` 调用 `.evozeus-wrapper/hooks/evozeus_wrapper_start_check.py`；前者是宿主薄接点，后者会在 SessionStart 刷新 GitHub latest release。查询失败时 advisory 模式警告、strict 模式阻断。
+- Project hook：target `.codex/hooks.json` 只覆盖 canonical repo 维护；adapter 优先复用 global dispatcher 的 latest cache，避免重复联网。
+- Global hook：`~/.codex/hooks.json` 调用 `~/.evozeus/hooks/evozeus_wrapper_dispatcher.py`，在 `SessionStart` 聚合检查全部 registered wrapped Skills。安装和 trust 分开报告，写操作必须显式批准。
+- Upgrade all：发现落后版本后先全量 preflight；任一 target 有 dirty/conflict 时零写入，应用中途失败则恢复 transaction snapshots。
 - Reinstall：先用 `--dry-run` 查看计划；实际执行会创建或修正 symlink。真实目录必须显式增加 `--approve-archive`，原内容移动到 `~/.evozeus/archives/runtime-installs/`，不会删除。
 - Feedback audit：`python3 scripts/evozeus_wrapper.py loop audit --target <repo> --user-input "<input>" --json` 判断用户纠正、不满意或机制缺陷是否应转为 Skill Feedback Issue，并输出脱敏 Issue draft；默认不写 GitHub。
 - Issue：必须符合反馈模板，说明不满意结果、期望结果、复现场景、证据边界和影响程度。

@@ -1923,6 +1923,48 @@ class GlobalDispatcherTest(unittest.TestCase):
             self.assertFalse(payload["continue"])
             self.assertIn("1 个 EvoZeus harness 落后", payload["stopReason"])
 
+    def test_project_and_global_hooks_share_one_remote_lookup(self):
+        project_template = Path(
+            "templates/target/.codex/hooks/evozeus_wrapper_start_check.py"
+        ).resolve()
+        spec = importlib.util.spec_from_file_location(
+            "evozeus_wrapper_project_hook_for_dedup",
+            project_template,
+        )
+        project_module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(project_module)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            calls = []
+
+            def fetch_latest():
+                calls.append("remote")
+                return {
+                    "version": "v0.10.0",
+                    "url": "https://example.test/v0.10.0",
+                    "error": None,
+                }
+
+            project_resolution = project_module.resolve_latest_version(
+                current="v0.9.1",
+                environment={},
+                fetcher=fetch_latest,
+                home=home,
+                now_epoch=1200,
+            )
+            global_resolution = self.module.resolve_latest_version(
+                home=home,
+                now_epoch=1200,
+                environment={},
+                fetcher=fetch_latest,
+            )
+
+        self.assertEqual(calls, ["remote"])
+        self.assertEqual(project_resolution["source"], "github_latest_release")
+        self.assertEqual(global_resolution["source"], "fresh_cache")
+
 
 class UpgradeAllHarnessTest(unittest.TestCase):
     def create_wrapper_source(self, root: Path, version: str = "v0.10.0") -> Path:
@@ -1931,6 +1973,11 @@ class UpgradeAllHarnessTest(unittest.TestCase):
         (wrapper_root / "CHANGELOG.md").write_text(
             f"# Changelog\n\n## [{version}] - 2026-07-20\n",
             encoding="utf-8",
+        )
+        dispatcher = wrapper_root / "templates/global/evozeus_wrapper_dispatcher.py"
+        dispatcher.parent.mkdir(parents=True)
+        dispatcher.write_bytes(
+            Path("templates/global/evozeus_wrapper_dispatcher.py").read_bytes()
         )
         return wrapper_root
 
@@ -2075,6 +2122,58 @@ class UpgradeAllHarnessTest(unittest.TestCase):
                 (target / ".evozeus-wrapper/wrapper.json").read_text(encoding="utf-8")
             )
             self.assertEqual(manifest["wrapper_version"], "v0.10.0")
+
+    def test_upgrade_all_refreshes_an_installed_global_dispatcher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            wrapper_root = self.create_wrapper_source(root)
+            target = self.create_upgrade_target(home, "refresh-global")
+            apply_global_hook_install(home, wrapper_root, approve=True)
+            installed_dispatcher = home / ".evozeus/hooks/evozeus_wrapper_dispatcher.py"
+            installed_dispatcher.write_text("# outdated dispatcher\n", encoding="utf-8")
+
+            def fake_plan(target_path, latest_version):
+                return {
+                    "target": str(target_path),
+                    "migration_required": True,
+                    "can_apply": True,
+                    "conflicts": [],
+                    "instruction_surface": "SKILL.md",
+                    "migration_record": ".evozeus-wrapper/docs/migrations/refresh.md",
+                    "moves": [],
+                    "managed_file_refreshes": [],
+                }
+
+            def fake_migrate(target_path, latest_version):
+                manifest = target_path / ".evozeus-wrapper/wrapper.json"
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                data["wrapper_version"] = latest_version
+                manifest.write_text(json.dumps(data), encoding="utf-8")
+                return {"writes": True, "changed_files": [str(manifest)]}
+
+            with patch(
+                "scripts.evozeus_wrapper_lifecycle.plan_target_layout_migration",
+                side_effect=fake_plan,
+            ), patch(
+                "scripts.evozeus_wrapper_lifecycle.migrate_target_layout",
+                side_effect=fake_migrate,
+            ):
+                report = apply_upgrade_all(home, wrapper_root, "v0.10.0", approve=True)
+
+            self.assertEqual(report["status"], "applied")
+            self.assertEqual(report["global_hook_refresh"]["status"], "installed")
+            self.assertEqual(
+                installed_dispatcher.read_bytes(),
+                (wrapper_root / "templates/global/evozeus_wrapper_dispatcher.py").read_bytes(),
+            )
+            self.assertEqual(read_global_hook_status(home)["trust_status"], "pending_review")
+            self.assertEqual(
+                json.loads(
+                    (target / ".evozeus-wrapper/wrapper.json").read_text(encoding="utf-8")
+                )["wrapper_version"],
+                "v0.10.0",
+            )
 
     def test_upgrade_all_cli_reports_up_to_date_for_empty_registry(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2416,15 +2515,17 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
         assert spec and spec.loader
         spec.loader.exec_module(module)
 
-        result = module.resolve_latest_version(
-            current="v0.7.0",
-            environment={},
-            fetcher=lambda: {
-                "version": "v0.8.0",
-                "url": "https://example.test/v0.8.0",
-                "error": None,
-            },
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = module.resolve_latest_version(
+                current="v0.7.0",
+                environment={},
+                fetcher=lambda: {
+                    "version": "v0.8.0",
+                    "url": "https://example.test/v0.8.0",
+                    "error": None,
+                },
+                home=Path(tmp) / "home",
+            )
 
         self.assertEqual(result["version"], "v0.8.0")
         self.assertEqual(result["source"], "github_latest_release")
@@ -2437,11 +2538,13 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
         assert spec and spec.loader
         spec.loader.exec_module(module)
 
-        result = module.resolve_latest_version(
-            current="v0.8.0",
-            environment={},
-            fetcher=lambda: {"version": None, "url": None, "error": "offline"},
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = module.resolve_latest_version(
+                current="v0.8.0",
+                environment={},
+                fetcher=lambda: {"version": None, "url": None, "error": "offline"},
+                home=Path(tmp) / "home",
+            )
 
         self.assertIsNone(result["version"])
         self.assertEqual(result["source"], "unavailable")
@@ -2473,6 +2576,33 @@ class EvolutionAndUpgradePlanningTest(unittest.TestCase):
 
         self.assertEqual(result["version"], "v0.10.0")
         self.assertEqual(result["source"], "global_dispatcher_cache")
+
+    def test_codex_project_hook_populates_shared_cache_after_remote_lookup(self):
+        template_path = Path("templates/target/.codex/hooks/evozeus_wrapper_start_check.py").resolve()
+        spec = importlib.util.spec_from_file_location("evozeus_wrapper_hook_template_write_cache", template_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            result = module.resolve_latest_version(
+                current="v0.9.1",
+                environment={},
+                fetcher=lambda: {
+                    "version": "v0.10.0",
+                    "url": "https://example.test/v0.10.0",
+                    "error": None,
+                },
+                home=home,
+                now_epoch=1200,
+            )
+            cache = json.loads(
+                (home / module.GLOBAL_CACHE_PATH).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(result["source"], "github_latest_release")
+        self.assertEqual(cache, {"version": "v0.10.0", "checked_at_epoch": 1200})
 
 
 if __name__ == "__main__":
