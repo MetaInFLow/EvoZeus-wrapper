@@ -149,6 +149,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade-all --latest-version v0.10.0 
 - wrapper major upgrade 必须用户确认。
 - consolidated layout 的版本刷新只改 harness-managed files，不改目标 Skill 业务规则。
 - legacy layout migration 可以更新 target-owned 文档或脚本中的旧 wrapper 路径引用；计划必须列出并备份完整 write set，且不得改变业务语义。
+- `migrate-layout` 和 `upgrade-all` 都必须拒绝绝对路径、`..` 越界和任何包含 symlink component 的 write path；manifest-selected instruction surface 同样必须是 target 内部的普通文件。
 - wrapper upgrade 必须生成迁移方案，列出每个 source/destination、冲突、保留的宿主接点、验证命令和回滚方案；有冲突时不得写入。
 - layout migration 必须预校验并安全合并 `.codex/hooks.json`，刷新状态段和 manifest integration，追加 migration note，并通过 post-migration structure validation 后才返回成功。
 - `upgrade-all` 的显式 latest version 必须与 dispatcher cache、环境 override 或 GitHub latest release 一致；该校验必须发生在“已是最新”判断前。每个 target 必须是可验证的 clean Git worktree，write set 及其父目录可写，且任何写路径不得经过 symlink。

@@ -37,6 +37,7 @@ python3 scripts/evozeus_wrapper.py harness upgrade-all --latest-version v0.10.0 
 - `upgrade-all` must prevalidate every registered target before the first write and restore every target snapshot if any apply step fails.
 - Resolve authority before deciding targets are current. The requested latest version must match the dispatcher cache, environment override, or GitHub latest release. Every target must have a verifiable clean Git worktree, writable write-set files and parents, and no symlink in any write path.
 - Snapshot every file the migration may rewrite, move, refresh, or delete. Legacy wrapper path references in target-owned files are part of this explicit write set even though business semantics remain unchanged.
+- Apply the same repository-boundary rule to direct `migrate-layout`: reject absolute paths, `..` traversal, symlinked write paths, and manifest-selected instruction surfaces outside the target.
 - A target harness manifest declares global capability ownership and scope, but live user-level dispatcher installation/trust comes from `hook global status` or the diagnosis overlay.
 - The global dispatcher is a native `SessionStart` aggregate gate, not a native per-Skill invocation hook.
 

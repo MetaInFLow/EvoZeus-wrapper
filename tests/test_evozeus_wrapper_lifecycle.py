@@ -847,6 +847,49 @@ class LifecycleBasicsTest(unittest.TestCase):
                 integration["capabilities"]["skill_entry_preflight"]["installed"]
             )
 
+    def test_manifest_selected_instruction_surface_cannot_escape_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "bundle"
+            target.mkdir()
+            (target / "AGENTS.md").write_text("# Runtime\n", encoding="utf-8")
+            outside = root / "outside.md"
+            outside.write_text(
+                "## EvoZeus-wrapper 状态检查\n\nExternal.\n",
+                encoding="utf-8",
+            )
+            manifest = target / ".evozeus-wrapper/wrapper.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "instruction_surface": "../outside.md",
+                        "integration": {
+                            "mode": "prompt_runtime_check",
+                            "capabilities": {
+                                "skill_entry_preflight": {
+                                    "installed": True,
+                                    "native_enforced": False,
+                                    "covers_skill_invocation": True,
+                                }
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            integration = detect_target_architecture(target)["integration"]
+
+            self.assertEqual(integration["instruction_surface"], "AGENTS.md")
+            self.assertFalse(
+                integration["capabilities"]["skill_entry_preflight"]["installed"]
+            )
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                preflight_root_entry_path(target)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_integration_contract(target, json.loads(manifest.read_text(encoding="utf-8")))
+
     def test_preflight_rejects_native_invocation_claim_backed_only_by_project_hook(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "wrapped-skill"
@@ -2658,6 +2701,26 @@ class UpgradeAllHarnessTest(unittest.TestCase):
             self.assertEqual(report["status"], "blocked")
             self.assertTrue(any("symlink" in error for error in report["errors"]))
             self.assertEqual(external.read_text(encoding="utf-8"), "outside\n")
+
+    def test_direct_migrate_layout_rejects_symlinked_write_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            target = self.create_upgrade_target(home, "direct-symlink")
+            external = root / "outside-direct.md"
+            external.write_text("Use .evozeus_evoinfra outside.\n", encoding="utf-8")
+            (target / "README.md").symlink_to(external)
+
+            plan = plan_target_layout_migration(target, "v0.10.0")
+
+            self.assertFalse(plan["can_apply"])
+            self.assertTrue(any("symlink" in error for error in plan["conflicts"]))
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                migrate_target_layout(target, "v0.10.0")
+            self.assertEqual(
+                external.read_text(encoding="utf-8"),
+                "Use .evozeus_evoinfra outside.\n",
+            )
 
     def test_upgrade_all_rejects_unwritable_target_before_apply(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -881,6 +881,25 @@ def surface_has_status_check(path: Path) -> bool:
     return False
 
 
+def safe_target_relative_file(target: Path, raw: object) -> Path | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    relative = Path(raw)
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    candidate = target / relative
+    cursor = candidate
+    while cursor != target:
+        if cursor.is_symlink():
+            return None
+        cursor = cursor.parent
+    try:
+        candidate.resolve(strict=True).relative_to(target)
+    except (OSError, ValueError):
+        return None
+    return candidate if candidate.is_file() else None
+
+
 def collect_evolution_surface_facts(target: Path, skill_inventory: list[dict[str, Any]]) -> dict[str, Any]:
     plugins = plugin_manifest_files(target)
     hooks = hook_files(target)
@@ -1030,7 +1049,7 @@ def detect_target_architecture(target: Path) -> dict[str, Any]:
             if isinstance(manifest_data, dict)
             else None
         )
-        if isinstance(manifest_surface, str) and (target / manifest_surface).is_file():
+        if safe_target_relative_file(target, manifest_surface) is not None:
             selected_instruction_surface = manifest_surface
     integration = classify_integration_mode(
         target_kind=target_kind,
@@ -1582,7 +1601,7 @@ def target_infra_text_files(target: Path) -> list[Path]:
         if root.is_dir():
             files.extend(path for path in sorted(root.rglob(pattern)) if path.is_file())
     wrapper_root = target / TARGET_EVOINFRA_DIR
-    if wrapper_root.is_dir():
+    if wrapper_root.is_dir() and not wrapper_root.is_symlink():
         files.extend(
             path
             for path in sorted(wrapper_root.rglob("*"))
@@ -1926,7 +1945,7 @@ def _legacy_layout_sources(target: Path) -> dict[str, list[Path]]:
 
     for source_dir_rel, destination_dir in LEGACY_LAYOUT_TREE_MAP:
         source_dir = target / source_dir_rel
-        if not source_dir.is_dir():
+        if not source_dir.is_dir() or source_dir.is_symlink():
             continue
         for source in sorted(source_dir.rglob("*")):
             if source.is_file():
@@ -2054,6 +2073,43 @@ def plan_target_layout_migration(
         for path in target.glob(pattern)
         if path.is_file()
     ]
+    managed_file_refreshes = [
+        CODEX_HOOKS_CONFIG,
+        TARGET_PREFLIGHT_SCRIPT,
+        CODEX_START_HOOK_SCRIPT,
+        TARGET_ONBOARDING_GUIDE,
+        ".github/ISSUE_TEMPLATE/config.yml",
+        ".github/workflows/evozeus-wrapper-preflight.yml",
+    ]
+    if requires_migration:
+        write_candidates = {
+            instruction_surface,
+            TARGET_WRAPPER_MANIFEST,
+            migration_record,
+            *managed_file_refreshes,
+            *text_rewrite_candidates,
+            *generated_cache_candidates,
+            *(
+                item.get(key)
+                for item in moves
+                for key in ("source", "destination")
+                if isinstance(item, dict)
+            ),
+        }
+        for relative in sorted(item for item in write_candidates if isinstance(item, str) and item):
+            relative_path = Path(relative)
+            if relative_path.is_absolute() or ".." in relative_path.parts:
+                conflicts.append(f"migration write path escapes target repository: {relative}")
+                continue
+            cursor = target / relative_path
+            while cursor != target:
+                if cursor.is_symlink():
+                    conflicts.append(
+                        "migration write path contains a symlink: "
+                        + str(cursor.relative_to(target))
+                    )
+                    break
+                cursor = cursor.parent
 
     return {
         "stage": "harness_layout_migration",
@@ -2071,14 +2127,7 @@ def plan_target_layout_migration(
         "version_refresh_required": version_refresh_required,
         "migration_record": migration_record if requires_migration else None,
         "moves": moves,
-        "managed_file_refreshes": [
-            CODEX_HOOKS_CONFIG,
-            TARGET_PREFLIGHT_SCRIPT,
-            CODEX_START_HOOK_SCRIPT,
-            TARGET_ONBOARDING_GUIDE,
-            ".github/ISSUE_TEMPLATE/config.yml",
-            ".github/workflows/evozeus-wrapper-preflight.yml",
-        ],
+        "managed_file_refreshes": managed_file_refreshes,
         "codex_hooks_update": codex_hooks_update,
         "instruction_surface": instruction_surface,
         "preserved_host_entrypoints": [

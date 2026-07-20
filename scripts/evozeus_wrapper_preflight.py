@@ -289,7 +289,19 @@ def check_integration_contract(target: Path, manifest: dict | None) -> None:
         surface_rel = (manifest or {}).get("instruction_surface") or integration.get("root_entry")
         if not isinstance(surface_rel, str) or not surface_rel:
             fail("skill_entry_preflight installation requires an instruction_surface")
-        surface = target / surface_rel
+        relative_surface = Path(surface_rel)
+        if relative_surface.is_absolute() or ".." in relative_surface.parts:
+            fail("skill_entry_preflight instruction_surface must stay inside target")
+        surface = target / relative_surface
+        cursor = surface
+        while cursor != target:
+            if cursor.is_symlink():
+                fail("skill_entry_preflight instruction_surface cannot use symlink components")
+            cursor = cursor.parent
+        try:
+            surface.resolve(strict=True).relative_to(target.resolve())
+        except (OSError, ValueError):
+            fail("skill_entry_preflight instruction_surface is missing or outside target")
         if not surface.is_file():
             fail("skill_entry_preflight instruction_surface is missing")
         content = content_after_frontmatter(surface.read_text(encoding="utf-8")).lstrip()
@@ -522,8 +534,24 @@ def check_status_prelude(skill_text: str, label: str = "SKILL.md") -> None:
 def root_entry_path(target: Path) -> Path:
     manifest = load_wrapper_manifest(target)
     if manifest and manifest.get("instruction_surface"):
-        manifest_surface = target / manifest["instruction_surface"]
-        if manifest_surface.exists():
+        raw_surface = manifest["instruction_surface"]
+        relative = Path(raw_surface) if isinstance(raw_surface, str) else Path("")
+        if relative.is_absolute() or ".." in relative.parts:
+            fail(f"manifest instruction_surface must stay inside target: {raw_surface}")
+        manifest_surface = target / relative
+        cursor = manifest_surface
+        while cursor != target:
+            if cursor.is_symlink():
+                fail(
+                    "manifest instruction_surface cannot use symlink components: "
+                    f"{raw_surface}"
+                )
+            cursor = cursor.parent
+        try:
+            manifest_surface.resolve(strict=True).relative_to(target.resolve())
+        except (OSError, ValueError):
+            fail(f"manifest instruction_surface is missing or outside target: {raw_surface}")
+        if manifest_surface.is_file():
             return manifest_surface
         fail(f"manifest instruction_surface is missing: {manifest['instruction_surface']}")
     skill = target / "SKILL.md"
